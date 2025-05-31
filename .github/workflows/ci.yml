@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Use Node.js \${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: \${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npm run test
+
+      - name: Run Playwright tests
+        run: npx playwright test --reporter=github
+
+      - name: Upload Playwright test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: playwright-results
+          path: playwright-report/

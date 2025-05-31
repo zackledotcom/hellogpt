@@ -1,0 +1,46 @@
+{
+  "name": "root",
+  "description": "Custom Ollama UI Electron app based on Vite + Tailwind",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "packages/entry-point.mjs",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=23.0.0"
+  },
+  "scripts": {
+    "build": "npm run build -ws --if-present",
+    "compile": "npm run build && electron-builder build --config electron-builder.mjs",
+    "test": "npx playwright test ./e2e",
+    "start": "node packages/dev-mode.js",
+    "typecheck": "npm run typecheck -ws --if-present",
+    "create-renderer": "cd packages && npm create vite@latest renderer",
+    "integrate-renderer": "npm start --workspace @app/integrate-renderer",
+    "init": "npm run create-renderer && npm run integrate-renderer && npm install",
+    "dev": "bash dev-start.sh"
+  },
+  "devDependencies": {
+    "@babel/eslint-parser": "^7.27.1",
+    "@babel/preset-react": "^7.27.1",
+    "@npmcli/map-workspaces": "4.0.2",
+    "@playwright/test": "1.52.0",
+    "@tailwindcss/postcss": "^4.1.8",
+    "@types/node": "22.15.23",
+    "@typescript-eslint/eslint-plugin": "^8.33.0",
+    "@typescript-eslint/parser": "^8.33.0",
+    "@vitest/coverage-v8": "^3.1.4",
+    "electron": "36.3.1",
+    "electron-builder": "26.0.12",
+    "eslint-plugin-react": "^7.37.5",
+    "glob": "11.0.2",
+    "playwright": "^1.52.0",
+    "postcss": "^8.5.4",
+    "postcss-load-config": "^6.0.1"
+  },
+  "dependencies": {
+    "@app/main": "workspace:*"
+  }
+}
