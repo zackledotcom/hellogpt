@@ -1,16 +1,28 @@
-import * as exports from './index.js';
-import {contextBridge} from 'electron';
+/**
+ * This file defines the APIs and objects exposed to the renderer process
+ * via Electron's contextBridge for secure IPC communication.
+ */
 
-console.log('Preload script loaded, exposing keys:', Object.keys(exports));
+import { contextBridge, ipcRenderer } from 'electron';
 
-const isExport = (key: string): key is keyof typeof exports => Object.hasOwn(exports, key);
-
-for (const exportsKey in exports) {
-  if (isExport(exportsKey)) {
-    console.log(`Exposing key to main world: ${exportsKey} (base64: ${btoa(exportsKey)})`);
-    contextBridge.exposeInMainWorld(btoa(exportsKey), exports[exportsKey]);
+contextBridge.exposeInMainWorld('electronAPI', {
+  sendMessage: (channel: string, message: any) => {
+    // List of valid channels
+    const validChannels = ['chat:sendMessage', 'app:healthCheck'];
+    if (validChannels.includes(channel)) {
+      return ipcRenderer.invoke(channel, message);
+    }
+    throw new Error(`Invalid IPC channel: ${channel}`);
+  },
+  onMessage: (channel: string, callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => {
+    const validChannels = ['chat:response', 'app:statusUpdate'];
+    if (validChannels.includes(channel)) {
+      ipcRenderer.on(channel, callback);
+    } else {
+      throw new Error(`Invalid IPC channel: ${channel}`);
+    }
+  },
+  removeListener: (channel: string, callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => {
+    ipcRenderer.removeListener(channel, callback);
   }
-}
-
-// Re-export for tests
-export * from './index.js';
+});

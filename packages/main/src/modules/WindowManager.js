@@ -5,19 +5,41 @@ class WindowManager {
     #openDevTools;
     constructor({ initConfig, openDevTools = false }) {
         this.#preload = initConfig.preload;
-        if (initConfig.renderer instanceof URL) {
+        if (typeof initConfig.renderer === 'string') {
+            this.#renderer = { type: 'url', value: initConfig.renderer };
+        }
+        else if (initConfig.renderer instanceof URL) {
             this.#renderer = { type: 'url', value: initConfig.renderer.toString() };
         }
         else {
-            this.#renderer = { type: 'file', value: initConfig.renderer.path };
+            // Fix: Use path.join to resolve file path dynamically and validate existence
+            const path = require('path');
+            const fs = require('fs');
+            const filePath = path.join(__dirname, '../../renderer/dist/index.html');
+            if (!fs.existsSync(filePath)) {
+                console.warn(`Renderer file missing: ${filePath}, falling back to localhost`);
+                this.#renderer = { type: 'url', value: 'http://localhost:3000' };
+            }
+            else {
+                this.#renderer = { type: 'file', value: filePath };
+            }
         }
         this.#openDevTools = openDevTools;
     }
     async enable({ app }) {
-        await app.whenReady();
-        await this.restoreOrCreateWindow(true);
-        app.on('second-instance', () => this.restoreOrCreateWindow(true));
-        app.on('activate', () => this.restoreOrCreateWindow(true));
+        try {
+            await app.whenReady();
+            await this.restoreOrCreateWindow(true);
+            app.on('second-instance', () => {
+                this.restoreOrCreateWindow(true).catch(err => console.error('Error on second-instance:', err));
+            });
+            app.on('activate', () => {
+                this.restoreOrCreateWindow(true).catch(err => console.error('Error on activate:', err));
+            });
+        }
+        catch (error) {
+            console.error('Error in WindowManager enable:', error);
+        }
     }
     async createWindow() {
         console.log('Creating BrowserWindow with preload path:', this.#preload.path);
@@ -31,33 +53,44 @@ class WindowManager {
                 preload: this.#preload.path,
             },
         });
-        if (this.#renderer.type === 'url') {
-            console.log('Loading renderer URL:', this.#renderer.value);
-            await browserWindow.loadURL(this.#renderer.value);
+        try {
+            if (this.#renderer.type === 'url') {
+                console.log('Loading renderer URL:', this.#renderer.value);
+                await browserWindow.loadURL(this.#renderer.value);
+            }
+            else {
+                console.log('Loading renderer file:', this.#renderer.value);
+                await browserWindow.loadFile(this.#renderer.value);
+            }
         }
-        else {
-            console.log('Loading renderer file:', this.#renderer.value);
-            await browserWindow.loadFile(this.#renderer.value);
+        catch (error) {
+            console.error('Error loading renderer:', error);
         }
         return browserWindow;
     }
     async restoreOrCreateWindow(show = false) {
         let window = BrowserWindow.getAllWindows().find(w => !w.isDestroyed());
-        if (window === undefined) {
-            window = await this.createWindow();
-        }
-        if (!show) {
+        try {
+            if (window === undefined) {
+                window = await this.createWindow();
+            }
+            if (!show) {
+                return window;
+            }
+            if (window.isMinimized()) {
+                window.restore();
+            }
+            window?.show();
+            if (this.#openDevTools) {
+                window?.webContents.openDevTools();
+            }
+            window.focus();
             return window;
         }
-        if (window.isMinimized()) {
-            window.restore();
+        catch (error) {
+            console.error('Error in restoreOrCreateWindow:', error);
+            throw error;
         }
-        window?.show();
-        if (this.#openDevTools) {
-            window?.webContents.openDevTools();
-        }
-        window.focus();
-        return window;
     }
 }
 export function createWindowManagerModule(...args) {

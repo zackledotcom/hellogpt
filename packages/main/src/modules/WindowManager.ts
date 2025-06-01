@@ -16,17 +16,34 @@ class WindowManager implements AppModule {
     } else if (initConfig.renderer instanceof URL) {
       this.#renderer = { type: 'url', value: initConfig.renderer.toString() };
     } else {
-      this.#renderer = { type: 'file', value: initConfig.renderer.path };
+      // Fix: Use path.join to resolve file path dynamically and validate existence
+      const path = require('path');
+      const fs = require('fs');
+      const filePath = path.join(__dirname, '../../renderer/dist/index.html');
+      if (!fs.existsSync(filePath)) {
+        console.warn(`Renderer file missing: ${filePath}, falling back to localhost`);
+        this.#renderer = { type: 'url', value: 'http://localhost:3000' };
+      } else {
+        this.#renderer = { type: 'file', value: filePath };
+      }
     }
 
     this.#openDevTools = openDevTools;
   }
 
   async enable({app}: ModuleContext): Promise<void> {
-    await app.whenReady();
-    await this.restoreOrCreateWindow(true);
-    app.on('second-instance', () => this.restoreOrCreateWindow(true));
-    app.on('activate', () => this.restoreOrCreateWindow(true));
+    try {
+      await app.whenReady();
+      await this.restoreOrCreateWindow(true);
+      app.on('second-instance', () => {
+        this.restoreOrCreateWindow(true).catch(err => console.error('Error on second-instance:', err));
+      });
+      app.on('activate', () => {
+        this.restoreOrCreateWindow(true).catch(err => console.error('Error on activate:', err));
+      });
+    } catch (error) {
+      console.error('Error in WindowManager enable:', error);
+    }
   }
 
   async createWindow(): Promise<BrowserWindow> {
@@ -42,12 +59,21 @@ class WindowManager implements AppModule {
       },
     });
 
-    if (this.#renderer.type === 'url') {
-      console.log('Loading renderer URL:', this.#renderer.value);
-      await browserWindow.loadURL(this.#renderer.value);
-    } else {
-      console.log('Loading renderer file:', this.#renderer.value);
-      await browserWindow.loadFile(this.#renderer.value);
+      try {
+      if (this.#renderer.type === 'url') {
+        console.log('Loading renderer URL:', this.#renderer.value);
+        await browserWindow.loadURL(this.#renderer.value);
+      } else {
+        console.log('Loading renderer file:', this.#renderer.value);
+        try {
+          await browserWindow.loadFile(this.#renderer.value);
+        } catch (error) {
+          console.error('Failed to load file:', error);
+          throw error;
+        }
+      }
+    } catch (error) {
+      console.error('Error loading renderer:', error);
     }
 
     return browserWindow;
@@ -56,27 +82,32 @@ class WindowManager implements AppModule {
   async restoreOrCreateWindow(show = false) {
     let window = BrowserWindow.getAllWindows().find(w => !w.isDestroyed());
 
-    if (window === undefined) {
-      window = await this.createWindow();
-    }
+    try {
+      if (window === undefined) {
+        window = await this.createWindow();
+      }
 
-    if (!show) {
+      if (!show) {
+        return window;
+      }
+
+      if (window.isMinimized()) {
+        window.restore();
+      }
+
+      window?.show();
+
+      if (this.#openDevTools) {
+        window?.webContents.openDevTools();
+      }
+
+      window.focus();
+
       return window;
+    } catch (error) {
+      console.error('Error in restoreOrCreateWindow:', error);
+      throw error;
     }
-
-    if (window.isMinimized()) {
-      window.restore();
-    }
-
-    window?.show();
-
-    if (this.#openDevTools) {
-      window?.webContents.openDevTools();
-    }
-
-    window.focus();
-
-    return window;
   }
 
 }
