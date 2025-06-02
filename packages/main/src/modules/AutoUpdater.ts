@@ -1,4 +1,4 @@
-import {AppModule} from '../AppModule.js';
+import type {AppModule} from '../AppModule.js';
 import electronUpdater, {type AppUpdater, type Logger} from 'electron-updater';
 
 type DownloadNotification = Parameters<AppUpdater['checkForUpdatesAndNotify']>[0];

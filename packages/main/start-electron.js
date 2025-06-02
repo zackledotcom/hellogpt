@@ -18,10 +18,13 @@ async function main() {
   const projectRoot = path.resolve(__dirname, '../../');
 
   // Determine renderer path or URL based on environment
-  const devURL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:8080';
-  const prodFile = path.resolve(projectRoot, 'packages/renderer/dist/index.html');
+  const devURL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
+  const prodFile = path.join(projectRoot, 'packages', 'renderer', 'dist', 'index.html');
 
-  const isDevMode = () => !app.isPackaged;
+  console.log('Project root:', projectRoot);
+  console.log('Production file path:', prodFile);
+
+  const isDevMode = () => process.env.NODE_ENV === 'development';
 
   const rendererEntry = isDevMode()
     ? { type: 'url', value: devURL }

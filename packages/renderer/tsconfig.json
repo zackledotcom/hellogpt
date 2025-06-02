@@ -7,15 +7,16 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "@app/*": ["../../packages/*/src/*"]
+      "@app/*": [
+        "../../packages/main/src/*",
+        "../../packages/preload/src/*",
+        "../../packages/renderer/src/*"
+      ]
     },
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "allowJs": true
   },
-  "include": [
-    "src/**/*",
-    "tests/**/*"
-  ]
+  "include": ["src/**/*", "tests/**/*", "../../scripts/fix.ts"]
 }

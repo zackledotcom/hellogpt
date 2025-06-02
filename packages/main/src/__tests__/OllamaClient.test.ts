@@ -3,7 +3,7 @@ import { OllamaClient } from '../modules/OllamaClient.js';
 import { appStatus } from '../modules/AppStatus.js';
 
 describe('OllamaClient', () => {
-  const apiUrl = 'https://api.ollama.com/v1/chat';
+  const apiUrl = 'http://localhost:11434/api/chat';
 
   beforeEach(() => {
     vi.resetAllMocks();

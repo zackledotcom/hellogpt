@@ -22,6 +22,7 @@ export default /** @type import('electron-builder').Configuration */
     'LICENSE*',
     pkg.main,
     '!node_modules/@app/**',
+    '!dist/**',
     ...await getListOfFilesFromEachWorkspace(),
   ],
 });
@@ -50,7 +51,7 @@ export default /** @type import('electron-builder').Configuration */
  * └── package.json
  * ```
  *
- * To prevent this, we read the “files”
+ * To prevent this, we read the "files"
  * property from each package's package.json
  * and add all files that do not match the patterns to the exclusion list.
  *

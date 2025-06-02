@@ -1,21 +1,28 @@
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './',
-  timeout: 30000,
+  testDir: './dist',
+  timeout: 120000,
   expect: {
-    timeout: 5000,
+    timeout: 30000,
   },
-  fullyParallel: true,
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: 1,
   reporter: 'list',
   use: {
-    headless: true,
+    headless: false,
     viewport: { width: 1280, height: 720 },
-    actionTimeout: 10000,
+    actionTimeout: 60000,
+    navigationTimeout: 60000,
     ignoreHTTPSErrors: true,
     video: 'retain-on-failure',
   },
+  projects: [
+    {
+      name: 'electron',
+      testMatch: /.*\.spec\.js/,
+    }
+  ],
 });

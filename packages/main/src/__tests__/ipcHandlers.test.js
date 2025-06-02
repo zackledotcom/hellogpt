@@ -14,7 +14,7 @@ describe('ipcHandlers', () => {
     let sendMessageMock;
     beforeEach(() => {
         vi.clearAllMocks();
-        const clientInstance = new OllamaClient('https://api.ollama.com/v1/chat', null, false);
+        const clientInstance = new OllamaClient('http://localhost:11434/api/chat', null, false);
         sendMessageMock = clientInstance.sendMessage;
     });
     it('should handle chat:sendMessage successfully', async () => {
@@ -33,19 +33,18 @@ describe('ipcHandlers', () => {
         expect(handler).toBeDefined();
         if (handler) {
             const result = await handler({}, 'Test message');
-            expect(result.success).toBe(false);
-            expect(result.error).toBe('API failure');
+            expect(result && typeof result === 'object' && 'success' in result && !result.success).toBe(true);
+            expect(result && typeof result === 'object' && 'error' in result && result.error).toBe('API failure');
         }
     });
     it('should handle app:healthCheck successfully', async () => {
         const handler = ipcHandlers.find(h => h.channel === 'app:healthCheck')?.handler;
         expect(handler).toBeDefined();
         if (handler) {
-            const result = await handler();
-            expect(result.success).toBe(true);
-            expect(result.data).toHaveProperty('ipcReady');
-            expect(result.data).toHaveProperty('ollamaModelLoaded');
-            expect(result.data).toHaveProperty('windowsOpen');
+            const result = await handler({}, '');
+            expect(result && typeof result === 'object' && 'success' in result && result.success).toBe(true);
+            expect(result && typeof result === 'object' && 'data' in result && result.data).toHaveProperty('status');
+            expect(result && typeof result === 'object' && 'data' in result && result.data).toHaveProperty('timestamp');
         }
     });
 });

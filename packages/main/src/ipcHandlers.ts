@@ -1,114 +1,190 @@
-import { BrowserWindow } from 'electron';
-import { OllamaClient } from './modules/OllamaClient.js';
-import { performance } from 'perf_hooks';
+import fetch, { Response as FetchResponse } from 'node-fetch';
+import { appStatus } from './modules/AppStatus.js';
 
-const ollamaClient = new OllamaClient('https://api.ollama.com/v1/chat', null, process.env.MOCK_OLLAMA === 'true');
+type Role = 'user' | 'system' | 'assistant';
 
-// In-memory logs for errors and warnings
-const runtimeErrors: string[] = [];
-const runtimeWarnings: string[] = [];
-
-// Performance metrics
-let ipcMemoryUsageSamples: number[] = [];
-let ipcCpuUsageSamples: number[] = [];
-
-function recordPerformanceMetrics() {
-  const memoryUsage = process.memoryUsage().heapUsed / 1024 / 1024; // MB
-  ipcMemoryUsageSamples.push(memoryUsage);
-
-  const cpuUsage = process.cpuUsage();
-  const cpuPercent = (cpuUsage.user + cpuUsage.system) / 1000; // ms
-  ipcCpuUsageSamples.push(cpuPercent);
+interface ChatMessage {
+  role: Role;
+  content: string;
 }
 
-// Override console.error and console.warn to capture logs
-const originalConsoleError = console.error;
-const originalConsoleWarn = console.warn;
+interface SendMessageOptions {
+  model?: string;
+  stream?: boolean;
+  cache?: boolean;
+}
 
-console.error = (...args: any[]) => {
-  runtimeErrors.push(args.map(String).join(' '));
-  originalConsoleError(...args);
-};
+export class OllamaClient {
+  private apiUrl: string;
+  private apiKey: string | null;
+  private mockMode: boolean;
+  private cache: Map<string, string>;
 
-console.warn = (...args: any[]) => {
-  runtimeWarnings.push(args.map(String).join(' '));
-  originalConsoleWarn(...args);
-};
+  constructor(
+    apiUrl: string = 'http://localhost:11434/api/chat',
+    apiKey: string | null = null,
+    mockMode: boolean = false
+  ) {
+    this.apiUrl = apiUrl;
+    this.apiKey = apiKey;
+    this.mockMode = mockMode;
+    this.cache = new Map();
+  }
 
-export const ipcHandlers: { channel: string; handler: (...args: any[]) => Promise<any> }[] = [
-  {
-    channel: 'chat:sendMessage',
-    handler: async (event: Electron.IpcMainInvokeEvent, message: string) => {
+  async sendMessage(
+    prompt: string,
+    options: SendMessageOptions = {}
+  ): Promise<string> {
+    if (this.mockMode) {
+      return `Mock response to: ${prompt}`;
+    }
+
+    const model = options.model ?? 'llama3';
+    const shouldStream = options.stream ?? false;
+    const useCache = options.cache ?? true;
+
+    const cacheKey = `${model}:${prompt}`;
+    if (useCache && this.cache.has(cacheKey)) {
+      return this.cache.get(cacheKey)!;
+    }
+
+    const payload = {
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      stream: shouldStream
+    };
+
+    try {
+      const response = await this.retryFetch(payload, 3);
+
+      if (shouldStream) {
+        const fullResponse = await this.handleStreamingResponse(response);
+        this.cache.set(cacheKey, fullResponse);
+        return fullResponse;
+      }
+
+      const json = await response.json();
+      const text = (json as any)?.message?.content ?? (json as any)?.response;
+
+      if (!text) {
+        throw new Error('Invalid Ollama response');
+      }
+
+      appStatus.lastModelLoadError = null;
+      appStatus.ollamaModelLoaded = true;
+
+      this.cache.set(cacheKey, text);
+      return text;
+    } catch (error: any) {
+      appStatus.lastModelLoadError = error.message || 'Unknown error';
+      appStatus.ollamaModelLoaded = false;
+      throw error;
+    }
+  }
+
+  private async retryFetch(body: any, retries = 3): Promise<FetchResponse> {
+    for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        recordPerformanceMetrics();
-        console.log(`Received message on channel 'chat:sendMessage': ${message}`);
-        const start = performance.now();
-        const response = await ollamaClient.sendMessage(message);
-        const duration = performance.now() - start;
-        console.log(`Sending response: ${response} (took ${duration.toFixed(2)} ms)`);
-        return { success: true, data: response, duration };
+        const response = await fetch(this.apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {})
+          },
+          body: JSON.stringify(body)
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`API error ${response.status}: ${errText}`);
+        }
+
+        return response;
+      } catch (error) {
+        if (attempt === retries) throw error;
+        await this.delay(200 * attempt); // Exponential backoff
+      }
+    }
+
+    throw new Error('Unreachable retry condition');
+  }
+
+  private async handleStreamingResponse(response: FetchResponse): Promise<string> {
+    const reader = (response.body as unknown as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let result = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      result += decoder.decode(value, { stream: true });
+    }
+
+    return result.trim();
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  getApiUrl(): string {
+    return this.apiUrl;
+  }
+}
+
+export const ipcHandlers = [
+  {
+    channel: 'app:sendMessage',
+    handler: async (_event: any, message: string) => {
+      const client = new OllamaClient();
+      try {
+        const data = await client.sendMessage(message);
+        return { success: true, data };
       } catch (error: any) {
-        console.error(`Error handling 'chat:sendMessage':`, error);
-        return { success: false, error: error?.message || 'Unknown error' };
+        return { success: false, error: error.message || 'Unknown error' };
       }
     },
   },
   {
     channel: 'app:healthCheck',
-    handler: async () => {
+    handler: async (_event: any) => {
+      return { success: true, data: { status: 'ok', timestamp: Date.now() } };
+    },
+  },
+  {
+    channel: 'app:sendMessageStream',
+    handler: async (event: any, message: string) => {
+      const client = new OllamaClient();
+      const payload = {
+        model: 'llama3',
+        messages: [{ role: 'user', content: message }],
+        stream: true
+      };
       try {
-        const windows = BrowserWindow.getAllWindows();
-        const windowsInfo = windows.map(win => ({
-          id: win.id,
-          title: win.getTitle(),
-          isVisible: win.isVisible(),
-          isMinimized: win.isMinimized(),
-          isDestroyed: win.isDestroyed(),
-        }));
-
-        const ipcChannels = ipcHandlers.map((h) => h.channel);
-
-        // For preload exposure keys, we can only check if any keys are exposed via contextBridge
-        // This requires renderer process cooperation; here we just note placeholder
-        const preloadExposedKeys = 'unknown - requires renderer cooperation';
-
-        // Dependency versions from package.json (simplified)
-        const dependencies = {
-          main: {}, // Removed require to avoid module resolution issues in tests
-          renderer: {}, // Removed require to avoid module resolution issues in tests
-          preload: {}, // Removed require to avoid module resolution issues in tests
-        };
-
-        // Calculate average memory and CPU usage
-        const avgMemoryUsage = ipcMemoryUsageSamples.length > 0
-          ? ipcMemoryUsageSamples.reduce((a, b) => a + b, 0) / ipcMemoryUsageSamples.length
-          : 0;
-        const avgCpuUsage = ipcCpuUsageSamples.length > 0
-          ? ipcCpuUsageSamples.reduce((a, b) => a + b, 0) / ipcCpuUsageSamples.length
-          : 0;
-
-        return {
-          success: true,
-          data: {
-            ipcReady: true,
-            ollamaModelLoaded: ollamaClient ? true : false,
-            windowsOpen: windows.length,
-            windowsInfo,
-            ipcChannels,
-            preloadExposedKeys,
-            runtimeErrors,
-            runtimeWarnings,
-            dependencies,
-            performance: {
-              avgMemoryUsageMB: avgMemoryUsage.toFixed(2),
-              avgCpuUsageMS: avgCpuUsage.toFixed(2),
-              samplesCollected: ipcMemoryUsageSamples.length,
-            },
-          },
-        };
+        const response = await fetch(client.getApiUrl(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!response.body) throw new Error('No response body');
+        const reader = (response.body as unknown as ReadableStream<Uint8Array>).getReader();
+        const decoder = new TextDecoder();
+        let done = false;
+        let fullText = '';
+        while (!done) {
+          const { value, done: streamDone } = await reader.read();
+          done = streamDone;
+          if (value) {
+            const chunk = decoder.decode(value, { stream: true });
+            fullText += chunk;
+            event.sender.send('app:streamChunk', chunk);
+          }
+        }
+        event.sender.send('app:streamEnd', fullText);
+        return { success: true, data: fullText };
       } catch (error: any) {
-        console.error(`Error handling 'app:healthCheck':`, error);
-        return { success: false, error: error?.message || 'Unknown error' };
+        event.sender.send('app:streamError', error.message || 'Unknown error');
+        return { success: false, error: error.message || 'Unknown error' };
       }
     },
   },

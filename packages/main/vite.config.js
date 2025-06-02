@@ -1,12 +1,11 @@
-import {getNodeMajorVersion} from '@app/electron-versions';
-import {spawn} from 'child_process';
+import { spawn } from 'child_process';
 import electronPath from 'electron';
+import { getNodeMajorVersion } from '@app/electron-versions';
 
-export default /**
- * @type {import('vite').UserConfig}
- * @see https://vitejs.dev/config/
+/**
+ * Vite config for Electron main process
  */
-({
+export default /** @type {import('vite').UserConfig} */ ({
   build: {
     ssr: true,
     sourcemap: 'inline',
@@ -26,66 +25,55 @@ export default /**
     reportCompressedSize: false,
   },
   plugins: [
-    handleHotReload(),
+    handleHotReload(), //  HERE
   ],
 });
 
-
-/**
- * Implement Electron app reload when some file was changed
- * @return {import('vite').Plugin}
- */
+// 🔁 Hot reload plugin definition
 function handleHotReload() {
-
-  /** @type {ChildProcess} */
   let electronApp = null;
-
-  /** @type {import('vite').ViteDevServer|null} */
   let rendererWatchServer = null;
 
   return {
     name: '@app/main-process-hot-reload',
 
     config(config, env) {
-      if (env.mode !== 'development') {
-        return;
-      }
+      if (env.mode !== 'development') return;
 
-      const rendererWatchServerProvider = config.plugins.find(p => p.name === '@app/renderer-watch-server-provider');
-      if (!rendererWatchServerProvider) {
-        throw new Error('Renderer watch server provider not found');
-      }
+      const provider = config.plugins.find(p => p.name === '@app/renderer-watch-server-provider');
+      if (!provider) throw new Error('Renderer watch server provider not found');
 
-      rendererWatchServer = rendererWatchServerProvider.api.provideRendererWatchServer();
+      rendererWatchServer = provider.api.provideRendererWatchServer();
 
-      process.env.VITE_DEV_SERVER_URL = rendererWatchServer.resolvedUrls.local[0];
+      const devUrl = rendererWatchServer?.resolvedUrls?.local?.[0];
+      if (!devUrl) throw new Error('Renderer dev server URL not found');
 
-      return {
-        build: {
-          watch: {},
-        },
-      };
+      process.env.VITE_DEV_SERVER_URL = devUrl;
+
+      return { build: { watch: {} } };
     },
 
     writeBundle() {
-      if (process.env.NODE_ENV !== 'development') {
-        return;
-      }
+      if (process.env.NODE_ENV !== 'development') return;
 
-      /** Kill electron if a process already exists */
-      if (electronApp !== null) {
+      if (electronApp) {
         electronApp.removeListener('exit', process.exit);
         electronApp.kill('SIGINT');
         electronApp = null;
       }
 
-      /** Spawn a new electron process */
-      electronApp = spawn(String(electronPath), ['--inspect', '.'], {
-        stdio: 'inherit',
-      });
+      try {
+        electronApp = spawn(String(electronPath), ['--inspect', '.'], {
+          stdio: 'inherit',
+        });
 
-      /** Stops the watch script when the application has been quit */
-      electronApp.addListener('exit', process.exit);
+        electronApp.addListener('exit', (code) => {
+          console.log(`Electron exited with code ${code}`);
+          process.exit(code ?? 0);
+        });
+      } catch (err) {
+        console.error(' Failed to start Electron:', err);
+      }
     },
   };
 }

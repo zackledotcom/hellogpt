@@ -1,7 +1,15 @@
 import type {AppModule} from '../AppModule.js';
-import {ModuleContext} from '../ModuleContext.js';
+import type {ModuleContext} from '../ModuleContext.js';
 import {BrowserWindow} from 'electron';
 import type {AppInitConfig} from '../AppInitConfig.js';
+
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 class WindowManager implements AppModule {
   readonly #preload: {path: string};
@@ -16,15 +24,23 @@ class WindowManager implements AppModule {
     } else if (initConfig.renderer instanceof URL) {
       this.#renderer = { type: 'url', value: initConfig.renderer.toString() };
     } else {
-      // Fix: Use path.join to resolve file path dynamically and validate existence
-      const path = require('path');
-      const fs = require('fs');
-      const filePath = path.join(__dirname, '../../renderer/dist/index.html');
-      if (!fs.existsSync(filePath)) {
-        console.warn(`Renderer file missing: ${filePath}, falling back to localhost`);
-        this.#renderer = { type: 'url', value: 'http://localhost:3000' };
+      // Fix: Use absolute path for renderer in production
+      const isDev = process.env.NODE_ENV === 'development';
+      if (isDev) {
+        this.#renderer = { type: 'url', value: 'http://localhost:5173' };
       } else {
-        this.#renderer = { type: 'file', value: filePath };
+        // Get the project root by going up from the current file's location
+        const projectRoot = path.resolve(__dirname, '../../../../');
+        const filePath = path.join(projectRoot, 'packages', 'renderer', 'dist', 'index.html');
+        console.log('Project root:', projectRoot);
+        console.log('Renderer path:', filePath);
+        
+        if (!fs.existsSync(filePath)) {
+          console.warn(`Renderer file missing: ${filePath}, falling back to localhost`);
+          this.#renderer = { type: 'url', value: 'http://localhost:5173' };
+        } else {
+          this.#renderer = { type: 'file', value: filePath };
+        }
       }
     }
 
@@ -43,37 +59,47 @@ class WindowManager implements AppModule {
       });
     } catch (error) {
       console.error('Error in WindowManager enable:', error);
+      throw error;
     }
   }
 
   async createWindow(): Promise<BrowserWindow> {
     console.log('Creating BrowserWindow with preload path:', this.#preload.path);
     const browserWindow = new BrowserWindow({
-      show: false, // Use the 'ready-to-show' event to show the instantiated BrowserWindow.
+      show: false,
+      width: 1200,
+      height: 800,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        sandbox: false, // Sandbox disabled because the demo of preload script depend on the Node.js api
-        webviewTag: false, // The webview tag is not recommended. Consider alternatives like an iframe or Electron's BrowserView. @see https://www.electronjs.org/docs/latest/api/webview-tag#warning
+        sandbox: false,
+        webviewTag: false,
         preload: this.#preload.path,
       },
     });
 
-      try {
+    // Handle window ready to show
+    browserWindow.once('ready-to-show', () => {
+      console.log('Window ready to show');
+      browserWindow.show();
+    });
+
+    // Handle window errors
+    browserWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      console.error('Failed to load:', errorCode, errorDescription);
+    });
+
+    try {
       if (this.#renderer.type === 'url') {
         console.log('Loading renderer URL:', this.#renderer.value);
         await browserWindow.loadURL(this.#renderer.value);
       } else {
         console.log('Loading renderer file:', this.#renderer.value);
-        try {
-          await browserWindow.loadFile(this.#renderer.value);
-        } catch (error) {
-          console.error('Failed to load file:', error);
-          throw error;
-        }
+        await browserWindow.loadFile(this.#renderer.value);
       }
     } catch (error) {
       console.error('Error loading renderer:', error);
+      throw error;
     }
 
     return browserWindow;
@@ -109,7 +135,6 @@ class WindowManager implements AppModule {
       throw error;
     }
   }
-
 }
 
 export function createWindowManagerModule(...args: ConstructorParameters<typeof WindowManager>) {

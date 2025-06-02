@@ -2,7 +2,7 @@ import type {ElectronApplication, JSHandle} from 'playwright';
 import {_electron as electron} from 'playwright';
 import {expect, test as base} from '@playwright/test';
 import type {BrowserWindow} from 'electron';
-import {globSync} from 'glob';
+import glob from 'glob';
 import {platform} from 'node:process';
 import {createHash} from 'node:crypto';
 
@@ -25,7 +25,7 @@ const test = base.extend<TestFixtures>({
       executablePattern += '/Contents/*/root';
     }
 
-    const [executablePath] = globSync(executablePattern);
+    const [executablePath] = glob.sync(executablePattern);
     if (!executablePath) {
       throw new Error('App Executable path not found');
     }

@@ -2,7 +2,7 @@ import { app, ipcMain } from 'electron';
 import { createWindowManagerModule } from './modules/WindowManager.js';
 import { ipcHandlers } from './ipcHandlers.js';
 
-async function main(initConfig: { preload: { path: string }; renderer: { path: string } | URL }) {
+export async function initApp(initConfig: { preload: { path: string }; renderer: { path: string } | URL }) {
   console.log('Main process starting with initConfig:', initConfig);
 
   // Register IPC handlers
@@ -19,16 +19,3 @@ async function main(initConfig: { preload: { path: string }; renderer: { path: s
 
   await windowManager.enable({ app });
 }
-
-app.whenReady().then(() => {
-  main({
-    preload: { path: './dist/exposed.mjs' },
-    renderer: { path: './dist/index.html' },
-  });
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});

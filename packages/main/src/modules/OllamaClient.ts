@@ -3,18 +3,15 @@ import { appStatus } from './AppStatus.js';
 
 export class OllamaClient {
   private apiUrl: string;
-  private apiKey: string | null;
   private mockMode: boolean;
 
-  constructor(apiUrl: string, apiKey: string | null = null, mockMode = false) {
+  constructor(apiUrl = 'http://localhost:11434/api/chat', _apiKey: string | null = null, mockMode = false) {
     this.apiUrl = apiUrl;
-    this.apiKey = apiKey;
     this.mockMode = mockMode;
   }
 
   async sendMessage(message: string): Promise<string> {
     if (this.mockMode) {
-      // Return a mock response for testing
       return Promise.resolve(`Mock response to: ${message}`);
     }
 
@@ -23,9 +20,13 @@ export class OllamaClient {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(this.apiKey ? { 'Authorization': `Bearer ${this.apiKey}` } : {}),
         },
-        body: JSON.stringify({ prompt: message }),
+        body: JSON.stringify({
+          model: 'llama3', // or whatever model you've pulled
+          messages: [
+            { role: 'user', content: message }
+          ],
+        }),
       });
 
       if (!response.ok) {
@@ -35,16 +36,21 @@ export class OllamaClient {
       }
 
       const json = await response.json();
-      const data = json as { response?: string };
+
+      // Ollama streams the response; for now assume single block
+      const data = json as { message?: { content?: string } };
       appStatus.lastModelLoadError = null;
       appStatus.ollamaModelLoaded = true;
 
-      // Assuming the API returns a field 'response' with the text
-      return data.response || 'No response from Ollama API';
+      return data.message?.content || 'No response from Ollama API';
     } catch (error: any) {
       appStatus.lastModelLoadError = error.message || 'Unknown error';
       appStatus.ollamaModelLoaded = false;
       throw error;
     }
+  }
+
+  getApiUrl() {
+    return this.apiUrl;
   }
 }

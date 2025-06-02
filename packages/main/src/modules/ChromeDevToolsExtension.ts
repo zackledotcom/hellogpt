@@ -1,46 +1,24 @@
-import {AppModule} from '../AppModule.js';
-import {ModuleContext} from '../ModuleContext.js';
-import installExtension, {
-  REDUX_DEVTOOLS,
-  VUEJS_DEVTOOLS,
-  VUEJS3_DEVTOOLS,
-  EMBER_INSPECTOR,
-  BACKBONE_DEBUGGER,
-  REACT_DEVELOPER_TOOLS,
-  APOLLO_DEVELOPER_TOOLS,
-  JQUERY_DEBUGGER,
-  ANGULARJS_BATARANG,
-  MOBX_DEVTOOLS,
-  CYCLEJS_DEVTOOL,
-} from 'electron-devtools-installer';
+import type {AppModule} from '../AppModule.js';
+import type {ModuleContext} from '../ModuleContext.js';
+// @ts-ignore
+const {default: install, REDUX_DEVTOOLS, REACT_DEVELOPER_TOOLS} = require('electron-devtools-installer');
 
-const extensionsDictionary = {
-  REDUX_DEVTOOLS,
-  VUEJS_DEVTOOLS,
-  VUEJS3_DEVTOOLS,
-  EMBER_INSPECTOR,
-  BACKBONE_DEBUGGER,
-  REACT_DEVELOPER_TOOLS,
-  APOLLO_DEVELOPER_TOOLS,
-  JQUERY_DEBUGGER,
-  ANGULARJS_BATARANG,
-  MOBX_DEVTOOLS,
-  CYCLEJS_DEVTOOL,
-} as const;
+const extensions = [
+  { id: REDUX_DEVTOOLS, name: 'Redux DevTools' },
+  { id: REACT_DEVELOPER_TOOLS, name: 'React Developer Tools' },
+] as const;
 
 export class ChromeDevToolsExtension implements AppModule {
-  readonly #extension: keyof typeof extensionsDictionary;
-
-  constructor({extension}: {readonly extension: keyof typeof extensionsDictionary}) {
-    this.#extension = extension;
-  }
-
   async enable({app}: ModuleContext): Promise<void> {
-    await app.whenReady();
-    await installExtension(extensionsDictionary[this.#extension]);
+    if (process.env.NODE_ENV === 'development') {
+      try {
+        for (const { id, name } of extensions) {
+          await install(id);
+          console.log(`Installed ${name}`);
+        }
+      } catch (e) {
+        console.error('Failed to install dev tools:', e);
+      }
+    }
   }
-}
-
-export function chromeDevToolsExtension(...args: ConstructorParameters<typeof ChromeDevToolsExtension>) {
-  return new ChromeDevToolsExtension(...args);
 }
