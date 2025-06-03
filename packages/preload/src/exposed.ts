@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+// Expose protected methods that allow the renderer process to use
+// the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
   sendMessage: (message: string) => ipcRenderer.invoke('send-message', message),
   healthCheck: () => ipcRenderer.invoke('health-check'),
@@ -12,5 +14,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onStreamError: (callback: (error: string) => void) => {
     ipcRenderer.on('stream-error', (_event, error) => callback(error));
   },
-  sendMessageStream: (message: string) => ipcRenderer.invoke('send-message-stream', message)
+  sendMessageStream: (message: string) => ipcRenderer.invoke('send-message-stream', message),
+  
+  // Ollama API
+  ollama: {
+    listModels: () => ipcRenderer.invoke('ollama:listModels'),
+    setModel: (modelName: string) => ipcRenderer.invoke('ollama:setModel', modelName),
+  },
 });

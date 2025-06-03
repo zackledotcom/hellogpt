@@ -1,11 +1,9 @@
+import { defineConfig } from 'vite';
+import { resolve } from 'path';
 import {resolveModuleExportNames} from 'mlly';
 import {getChromeMajorVersion} from '@app/electron-versions';
 
-export default /**
- * @type {import('vite').UserConfig}
- * @see https://vitejs.dev/config/
- */
-({
+export default defineConfig({
   build: {
     ssr: true,
     sourcemap: 'inline',
@@ -13,16 +11,15 @@ export default /**
     target: `chrome${getChromeMajorVersion()}`,
     assetsDir: '.',
     lib: {
-      entry: ['src/exposed.ts', 'virtual:browser.js'],
+      entry: resolve(__dirname, 'src/index.ts'),
+      formats: ['cjs'],
+      fileName: () => 'index.cjs'
     },
     rollupOptions: {
-      output: [
-        {
-          // ESM preload scripts must have the .mjs extension
-          // https://www.electronjs.org/docs/latest/tutorial/esm#esm-preload-scripts-must-have-the-mjs-extension
-          entryFileNames: '[name].mjs',
-        },
-      ],
+      external: ['electron'],
+      output: {
+        entryFileNames: '[name].cjs'
+      }
     },
     emptyOutDir: true,
     reportCompressedSize: false,
@@ -90,9 +87,7 @@ function handleHotReload() {
     name: '@app/preload-process-hot-reload',
 
     config(config, env) {
-      if (env.mode !== 'development') {
-        return;
-      }
+      if (env.mode !== 'development') return;
 
       const rendererWatchServerProvider = config.plugins.find(p => p.name === '@app/renderer-watch-server-provider');
       if (!rendererWatchServerProvider) {

@@ -1,40 +1,36 @@
-import {sha256sum} from './nodeCrypto.js';
-import {versions} from './versions.js';
-import {ipcRenderer} from 'electron';
+const { contextBridge, ipcRenderer } = require('electron');
 
-function sendMessage(message: string) {
-  return ipcRenderer.invoke('app:sendMessage', message);
-}
+// Expose protected methods that allow the renderer process to use
+// the ipcRenderer without exposing the entire object
+contextBridge.exposeInMainWorld(
+  'electronAPI',
+  {
+    ollama: {
+      listModels: () => ipcRenderer.invoke('ollama:listModels'),
+      generate: (prompt: string, model: string) => ipcRenderer.invoke('ollama:generate', prompt, model),
+      stream: (prompt: string, model: string) => {
+        const channel = 'ollama-stream';
+        ipcRenderer.send('ollama:stream', prompt, model);
+        return {
+          onChunk: (callback: (chunk: string) => void) => {
+            ipcRenderer.on(channel, (_event: Electron.IpcRendererEvent, chunk: string) => callback(chunk));
+          },
+          stop: () => {
+            ipcRenderer.removeAllListeners(channel);
+            ipcRenderer.send('ollama:stop');
+          }
+        };
+      }
+    }
+  }
+);
 
-function sendMessageStream(message: string) {
-  return ipcRenderer.invoke('app:sendMessageStream', message);
-}
-
-async function healthCheck() {
-  return ipcRenderer.invoke('app:healthCheck');
-}
-
-// Expose streaming event handlers
-function onStreamChunk(callback: (chunk: string) => void) {
-  ipcRenderer.on('app:streamChunk', (_event, chunk) => callback(chunk));
-}
-
-function onStreamEnd(callback: (fullText: string) => void) {
-  ipcRenderer.on('app:streamEnd', (_event, fullText) => callback(fullText));
-}
-
-function onStreamError(callback: (error: string) => void) {
-  ipcRenderer.on('app:streamError', (_event, error) => callback(error));
-}
-
-// Expose the API to the renderer process
-window.electronAPI = {
-  sendMessage,
-  sendMessageStream,
-  healthCheck,
-  onStreamChunk,
-  onStreamEnd,
-  onStreamError
-};
-
-export {sha256sum, versions, sendMessage, sendMessageStream, healthCheck};
+contextBridge.exposeInMainWorld(
+  'memoryAPI',
+  {
+    initialize: () => ipcRenderer.invoke('memory:initialize'),
+    store: (text: string) => ipcRenderer.invoke('memory:store', text),
+    search: (query: string) => ipcRenderer.invoke('memory:search', query),
+    recent: () => ipcRenderer.invoke('memory:recent')
+  }
+); 
