@@ -1,24 +1,21 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "ESNext",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "moduleResolution": "bundler",
-    "esModuleInterop": true,
-    "strict": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
     "outDir": "dist",
     "rootDir": "src",
-    "allowJs": false,
-    "checkJs": false,
-    "noEmit": false,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "composite": true,
+    "declaration": true,
     "jsx": "react-jsx",
-    "baseUrl": ".",
     "paths": {
-      "@app/*": ["../*"]
+      "@app/shared/*": ["../../shared/*"]
     }
   },
+  "references": [
+    { "path": "../shared" }
+  ],
   "include": ["src/**/*"],
   "exclude": ["**/*.js", "dist/**", "node_modules"]
 }

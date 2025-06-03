@@ -1,57 +1,104 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 
-// Define the expected structure of the memory API exposed by the preload script
-interface ExposedMemoryAPI {
-  getMemory: () => Promise<any>; // Adjust return type based on actual implementation
-  // Add other memory-related methods if needed
+interface MemoryChunk {
+  id: string;
+  content: string;
+  metadata: {
+    timestamp: number;
+    source: string;
+    type: string;
+    tags?: string[];
+    [key: string]: any;
+  };
+}
+
+interface MemoryAPI {
+  initialize: () => Promise<{ success: boolean; error?: string }>;
+  store: (content: string, metadata: Omit<MemoryChunk['metadata'], 'timestamp'>) => Promise<{ success: boolean; id?: string; error?: string }>;
+  search: (query: string, options?: { limit?: number }) => Promise<{ success: boolean; results?: MemoryChunk[]; error?: string }>;
+  getRecent: (limit?: number) => Promise<{ success: boolean; results?: MemoryChunk[]; error?: string }>;
 }
 
 declare global {
   interface Window {
-    memory: ExposedMemoryAPI; // Declare the memory API on the Window object
+    memoryAPI: MemoryAPI;
   }
 }
 
 interface MemoryState {
-  memoryInfo: any; // Adjust type based on actual memory info structure
+  isInitialized: boolean;
   isLoading: boolean;
   error: string | null;
+  searchMemory: (query: string, options?: { limit?: number }) => Promise<MemoryChunk[]>;
+  storeMemory: (content: string, metadata: Omit<MemoryChunk['metadata'], 'timestamp'>) => Promise<{ success: boolean; id?: string; error?: string }>;
+  getRecentMemories: (limit?: number) => Promise<MemoryChunk[]>;
 }
 
-export function useMemory() {
-  const [memoryState, setMemoryState] = useState<MemoryState>({
-    memoryInfo: null,
-    isLoading: true,
-    error: null,
-  });
+export function useMemory(): MemoryState {
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchMemory = async () => {
-      if (window.memory?.getMemory) {
+    const initializeMemory = async () => {
+      if (window.memoryAPI?.initialize) {
         try {
-          const info = await window.memory.getMemory();
-          setMemoryState({ memoryInfo: info, isLoading: false, error: null });
-          toast.success('Memory info fetched!');
+          const result = await window.memoryAPI.initialize();
+          setIsInitialized(result.success);
+          setError(result.error || null);
+          toast.success('Memory service initialized!');
         } catch (err: any) {
-          console.error('Error fetching memory info:', err);
-          setMemoryState({ memoryInfo: null, isLoading: false, error: err.message });
-          toast.error(`Failed to fetch memory info: ${err.message}`);
+          console.error('Error initializing memory service:', err);
+          setError(err.message);
+          toast.error(`Failed to initialize memory service: ${err.message}`);
         }
       } else {
-        setMemoryState({ memoryInfo: null, isLoading: false, error: 'Memory API not exposed in preload script.' });
+        setError('Memory API not exposed in preload script.');
         toast.error('Memory API not available.');
         console.error('Memory API not exposed in preload script.');
       }
+      setIsLoading(false);
     };
 
-    fetchMemory();
+    initializeMemory();
+  }, []);
 
-    // Consider adding an interval to fetch memory info periodically
-    // const intervalId = setInterval(fetchMemory, 5000); // Fetch every 5 seconds
-    // return () => clearInterval(intervalId);
+  const searchMemory = async (query: string, options?: { limit?: number }): Promise<MemoryChunk[]> => {
+    if (!window.memoryAPI?.search) {
+      throw new Error('Memory API not available');
+    }
+    const result = await window.memoryAPI.search(query, options);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to search memories');
+    }
+    return result.results || [];
+  };
 
-  }, []); // Empty dependency array means this effect runs once on mount
+  const storeMemory = async (content: string, metadata: Omit<MemoryChunk['metadata'], 'timestamp'>): Promise<{ success: boolean; id?: string; error?: string }> => {
+    if (!window.memoryAPI?.store) {
+      throw new Error('Memory API not available');
+    }
+    return window.memoryAPI.store(content, metadata);
+  };
 
-  return memoryState;
+  const getRecentMemories = async (limit?: number): Promise<MemoryChunk[]> => {
+    if (!window.memoryAPI?.getRecent) {
+      throw new Error('Memory API not available');
+    }
+    const result = await window.memoryAPI.getRecent(limit);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to get recent memories');
+    }
+    return result.results || [];
+  };
+
+  return {
+    isInitialized,
+    isLoading,
+    error,
+    searchMemory,
+    storeMemory,
+    getRecentMemories
+  };
 } 

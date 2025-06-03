@@ -6,7 +6,7 @@ import { useMemory } from '../hooks/useMemory';
 import toast from 'react-hot-toast';
 import { ipcRenderer } from 'electron';
 
-// MemoryChunk interface (matches main process structure) - Keep this definition here or import from a shared types file if available
+// MemoryChunk interface (matches main process structure)
 interface MemoryChunk {
   id: string;
   content: string;
@@ -15,44 +15,32 @@ interface MemoryChunk {
     source: string;
     type: string;
     tags?: string[];
-    [key: string]: any; // Allow additional properties
+    [key: string]: any;
   };
+}
+
+// MemoryState interface
+interface MemoryState {
+  isInitialized: boolean;
+  isLoading: boolean;
+  error: string | null;
+  searchMemory: (query: string, options?: { limit?: number }) => Promise<MemoryChunk[]>;
+  storeMemory: (content: string, metadata: Omit<MemoryChunk['metadata'], 'timestamp'>) => Promise<{ success: boolean; id?: string; error?: string }>;
+  getRecentMemories: (limit?: number) => Promise<MemoryChunk[]>;
+}
+
+// MemoryAPI interface
+interface MemoryAPI {
+  initialize: () => Promise<{ success: boolean; error?: string }>;
+  store: (content: string, metadata: Omit<MemoryChunk['metadata'], 'timestamp'>) => Promise<{ success: boolean; id?: string; error?: string }>;
+  search: (query: string, options?: { limit?: number }) => Promise<{ success: boolean; results?: MemoryChunk[]; error?: string }>;
+  getRecent: (limit?: number) => Promise<{ success: boolean; results?: MemoryChunk[]; error?: string }>;
 }
 
 // Declare global window properties for Electron and Memory APIs
 declare global {
   interface Window {
-    electronAPI: {
-      sendMessage: (message: string) => Promise<string>;
-      healthCheck: () => Promise<{ status: string; timestamp: number }>;
-      onStreamChunk: (callback: (chunk: string) => void) => void;
-      onStreamEnd: (callback: (fullText: string) => void) => void;
-      onStreamError: (callback: (error: string) => void) => void;
-      sendMessageStream: (message: string) => Promise<any>;
-      ollama: { // Added back based on previous linter error context
-        listModels: () => Promise<{
-          models: Array<{
-            name: string;
-            modified_at: string;
-            size: number;
-            digest: string;
-            details: {
-              format: string;
-              family: string;
-              parameter_size: string;
-              quantization_level: string;
-            };
-          }>;
-        }>;
-        setModel: (modelName: string) => Promise<void>;
-      };
-    };
-    memoryAPI: {
-      initialize: () => Promise<{ success: boolean; error?: string }>;
-      store: (content: string, metadata: Omit<MemoryChunk['metadata'], 'timestamp'>) => Promise<{ success: boolean; id?: string; error?: string }>;
-      search: (query: string, options?: { limit?: number }) => Promise<{ success: boolean; results?: MemoryChunk[]; error?: string }>;
-      getRecent: (limit?: number) => Promise<{ success: boolean; results?: MemoryChunk[]; error?: string }>;
-    };
+    memoryAPI: MemoryAPI;
   }
 }
 
