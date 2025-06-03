@@ -1,12 +1,17 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import Chat from './components/Chat.tsx';
+import AppLayout from './components/AppLayout';
+import { ThemeProvider } from './contexts/ThemeContext';
+import { Toaster } from 'react-hot-toast';
 import './index.css';
 
-console.log('Renderer process started and main.jsx is executing.');
+console.log('Renderer process started and main.tsx is executing.');
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <Chat />
+    <ThemeProvider>
+      <AppLayout />
+    </ThemeProvider>
+    <Toaster position="bottom-right" />
   </React.StrictMode>,
 );

@@ -1,11 +1,14 @@
 import { spawn } from 'child_process';
 import electronPath from 'electron';
 import { getNodeMajorVersion } from '@app/electron-versions';
+import { defineConfig } from 'vite';
+import fs from 'fs';
+import { resolve } from 'path';
 
 /**
  * Vite config for Electron main process
  */
-export default /** @type {import('vite').UserConfig} */ ({
+export default defineConfig({
   build: {
     ssr: true,
     sourcemap: 'inline',
@@ -13,19 +16,30 @@ export default /** @type {import('vite').UserConfig} */ ({
     assetsDir: '.',
     target: `node${getNodeMajorVersion()}`,
     lib: {
-      entry: 'src/index.ts',
-      formats: ['es'],
+      entry: resolve(__dirname, 'src/index.ts'),
+      formats: ['cjs'],
+      fileName: () => 'index.cjs'
     },
     rollupOptions: {
+      external: ['electron', 'path', 'child_process', 'util', 'chromadb'],
       output: {
-        entryFileNames: '[name].js',
-      },
+        entryFileNames: '[name].cjs'
+      }
     },
     emptyOutDir: true,
     reportCompressedSize: false,
+    minify: true,
   },
   plugins: [
     handleHotReload(), //  HERE
+    {
+      name: 'check-entry',
+      configResolved() {
+        if (!fs.existsSync('src/index.ts')) {
+          throw new Error('Main process entry src/index.ts missing');
+        }
+      }
+    }
   ],
 });
 
@@ -54,7 +68,9 @@ function handleHotReload() {
     },
 
     writeBundle() {
-      if (process.env.NODE_ENV !== 'development') return;
+      // IMPORTANT: Only spawn Electron in production builds. In development,
+      // the 'start' script handles launching Electron.
+      if (process.env.NODE_ENV === 'development') return;
 
       if (electronApp) {
         electronApp.removeListener('exit', process.exit);
@@ -63,8 +79,13 @@ function handleHotReload() {
       }
 
       try {
+        console.log(`Attempting to spawn Electron from path: ${electronPath}`);
+        // Redirect stdout and stderr to files
+        const stdoutLog = fs.openSync('electron_stdout.log', 'w');
+        const stderrLog = fs.openSync('electron_stderr.log', 'w');
+
         electronApp = spawn(String(electronPath), ['--inspect', '.'], {
-          stdio: 'inherit',
+          stdio: ['ignore', stdoutLog, stderrLog],
         });
 
         electronApp.addListener('exit', (code) => {

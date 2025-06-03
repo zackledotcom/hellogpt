@@ -1,0 +1,41 @@
+{
+  "appId": "com.hellogpt.app",
+  "productName": "HelloGPT",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "packages/main/dist/**",
+    "packages/preload/dist/**",
+    "packages/renderer/dist/**",
+    "!**/*.map"
+  ],
+  "extraResources": [
+    {
+      "from": "packages/renderer/dist",
+      "to": "renderer",
+      "filter": ["**/*"]
+    }
+  ],
+  "mac": {
+    "category": "public.app-category.developer-tools",
+    "target": ["dmg", "zip"],
+    "icon": "build/icon.icns"
+  },
+  "win": {
+    "target": ["nsis", "portable"],
+    "icon": "build/icon.ico"
+  },
+  "linux": {
+    "target": ["AppImage", "deb"],
+    "category": "Development"
+  },
+  "asar": true,
+  "asarUnpack": [
+    "node_modules/ffmpeg-static/*"
+  ],
+  "publish": {
+    "provider": "github",
+    "releaseType": "release"
+  }
+} 

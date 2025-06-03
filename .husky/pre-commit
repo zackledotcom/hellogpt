@@ -1,0 +1,11 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Check for .js files in src directories
+if git diff --cached --name-only | grep -E 'packages/.*/src/.*\.js$'; then
+  echo "Error: Cannot commit .js files in src directories. Please remove them and commit only .ts files."
+  exit 1
+fi
+
+# Run cleanup script
+npm run cleanup 
