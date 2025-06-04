@@ -1,17 +1,20 @@
 import { useState, useEffect } from 'react';
-import type { ModelLoadingState } from '../types/ipc';
+import type { ModelLoadingState } from '@/types/ipc';
 
 export function useModelStatus() {
-  const [state, setState] = useState<ModelLoadingState>({
-    isLoading: false,
-    modelName: '',
-    progress: 0,
-    estimatedTimeRemaining: 0
-  });
+  const [isLoading, setIsLoading] = useState(false);
+  const [modelName, setModelName] = useState<string | undefined>();
+  const [progress, setProgress] = useState<number | undefined>();
+  const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<number | undefined>();
+  const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
-    const unsubscribe = window.electronAPI.onModelLoadingStateChanged((newState: ModelLoadingState) => {
-      setState(newState);
+    const unsubscribe = window.electronAPI.ollama.onModelLoadingStateChanged((newState: ModelLoadingState) => {
+      setIsLoading(newState.isLoading);
+      setModelName(newState.modelName);
+      setProgress(newState.progress);
+      setEstimatedTimeRemaining(newState.estimatedTimeRemaining);
+      setError(newState.error);
     });
 
     return () => {
@@ -19,5 +22,11 @@ export function useModelStatus() {
     };
   }, []);
 
-  return state;
+  return {
+    isLoading,
+    modelName,
+    progress,
+    estimatedTimeRemaining,
+    error,
+  };
 } 

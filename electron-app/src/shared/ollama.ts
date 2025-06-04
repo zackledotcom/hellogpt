@@ -113,10 +113,14 @@ export class OllamaClient {
       if (!response.ok) {
         throw new Error(`Ollama API error: ${response.statusText}`);
       }
-      return { connected: true };
+      return { 
+        status: 'connected',
+        lastChecked: Date.now()
+      };
     } catch (error) {
       return {
-        connected: false,
+        status: 'error',
+        lastChecked: Date.now(),
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }

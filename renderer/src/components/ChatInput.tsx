@@ -4,25 +4,30 @@ import { useOllama } from '../hooks/useOllama';
 import { Send, StopCircle, ArrowUp, ArrowDown, Loader2 } from 'lucide-react';
 import type { ChatMessage } from '../types/ipc';
 import { Role } from '../types/ipc';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
 
 interface ChatInputProps {
-  onMessageSent: (message: ChatMessage) => void;
-  onStreamComplete: () => void;
-  isStreaming: boolean;
-  onStopStream: () => void;
+  onSendMessage: (content: string) => Promise<void>;
+  onMessageSent?: (message: ChatMessage) => void;
+  onStreamComplete?: () => void;
+  isStreaming?: boolean;
+  onStopStream?: () => void;
 }
 
-export const ChatInput: React.FC<ChatInputProps> = ({
-  onMessageSent,
-  onStreamComplete,
-  isStreaming,
-  onStopStream,
-}) => {
+export function ChatInput({ 
+  onSendMessage, 
+  onMessageSent, 
+  onStreamComplete, 
+  isStreaming = false, 
+  onStopStream 
+}: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { sendMessageStream, isConnected, error } = useOllama();
+  const [isSending, setIsSending] = useState(false);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -59,25 +64,27 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   };
 
-  const handleSend = useCallback(async () => {
-    if (!message.trim() || !isConnected || isStreaming) return;
+  const handleSend = async () => {
+    if (!message.trim() || !isConnected || isStreaming || isSending) return;
 
-    const newMessage: ChatMessage = {
-      role: Role.User,
-      content: message.trim(),
-      timestamp: Date.now(),
-    };
-
-    // Add to history
-    setHistory(prev => [...prev, message.trim()]);
-    setHistoryIndex(-1);
-    setMessage('');
-    onMessageSent(newMessage);
-
-    // Start streaming response
+    setIsSending(true);
     try {
+      const userMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: Role.User,
+        content: message.trim(),
+        timestamp: Date.now(),
+      };
+
+      // Add to history
+      setHistory(prev => [...prev, message.trim()]);
+      setHistoryIndex(-1);
+      setMessage('');
+      onMessageSent?.(userMessage);
+
+      // Start streaming response
       await sendMessageStream(
-        newMessage,
+        userMessage,
         {
           onChunk: (chunk) => {
             // Handle streaming chunks
@@ -86,14 +93,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             console.error('Stream error:', error);
           },
           onComplete: () => {
-            onStreamComplete();
+            onStreamComplete?.();
           }
         }
       );
-    } catch (err) {
-      console.error('Failed to send message:', err);
+    } catch (error) {
+      console.error('Error sending message:', error);
+    } finally {
+      setIsSending(false);
     }
-  }, [message, isConnected, isStreaming, onMessageSent, onStreamComplete, sendMessageStream]);
+  };
 
   return (
     <motion.div
@@ -105,47 +114,48 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         <div className="relative">
           {/* Input Area */}
           <div className="relative bg-gray-800/50 backdrop-blur-sm rounded-lg border border-gray-700/50 shadow-xl">
-            <textarea
-              ref={textareaRef}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={isConnected ? "Type a message..." : "Connecting to Ollama..."}
-              disabled={!isConnected || isStreaming}
-              className="w-full px-4 py-3 pr-24 bg-transparent text-gray-200 placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 rounded-lg"
-              rows={1}
-            />
-
-            {/* Action Buttons */}
-            <div className="absolute right-2 bottom-2 flex items-center space-x-2">
+            <div className="flex space-x-2">
+              <Input
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyPress={handleKeyDown}
+                placeholder={isConnected ? "Type a message..." : "Connecting to Ollama..."}
+                disabled={!isConnected || isStreaming || isSending}
+                className="flex-1"
+              />
               <AnimatePresence>
                 {isStreaming ? (
-                  <motion.button
+                  <motion.div
                     initial={{ scale: 0.8, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.8, opacity: 0 }}
-                    onClick={onStopStream}
-                    className="p-2 text-red-400 hover:text-red-300 transition-colors"
-                    title="Stop generating"
                   >
-                    <StopCircle className="w-5 h-5" />
-                  </motion.button>
+                    <Button
+                      onClick={onStopStream}
+                      variant="destructive"
+                      size="icon"
+                    >
+                      <StopCircle className="w-4 h-4" />
+                    </Button>
+                  </motion.div>
                 ) : (
-                  <motion.button
+                  <motion.div
                     initial={{ scale: 0.8, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.8, opacity: 0 }}
-                    onClick={handleSend}
-                    disabled={!message.trim() || !isConnected}
-                    className={`p-2 rounded-full transition-colors ${
-                      message.trim() && isConnected
-                        ? 'text-blue-400 hover:text-blue-300'
-                        : 'text-gray-500 cursor-not-allowed'
-                    }`}
-                    title="Send message (Enter)"
                   >
-                    <Send className="w-5 h-5" />
-                  </motion.button>
+                    <Button
+                      onClick={handleSend}
+                      disabled={!message.trim() || !isConnected || isStreaming || isSending}
+                      size="icon"
+                    >
+                      {isSending ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Send className="w-4 h-4" />
+                      )}
+                    </Button>
+                  </motion.div>
                 )}
               </AnimatePresence>
             </div>
@@ -182,4 +192,4 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       </div>
     </motion.div>
   );
-};
+}

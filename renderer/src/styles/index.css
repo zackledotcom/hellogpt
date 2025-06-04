@@ -2,6 +2,133 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 221.2 83.2% 53.3%;
+    --coral: 16 100% 66%;
+    --coral-foreground: 16 100% 98%;
+    --mint: 160 84% 39%;
+    --mint-foreground: 160 84% 98%;
+    --radius: 0.75rem;
+  }
+ 
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 224.3 76.3% 48%;
+    --coral: 16 100% 66%;
+    --coral-foreground: 16 100% 98%;
+    --mint: 160 84% 39%;
+    --mint-foreground: 160 84% 98%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Custom scrollbar styles */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/20 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/30;
+}
+
+/* Glass effect styles */
+.glass {
+  @apply bg-background/60 backdrop-blur-glass border border-white/10 shadow-glass;
+  backdrop-filter: blur(12px);
+}
+
+.glass-hover {
+  @apply hover:bg-background/70 hover:shadow-glass-hover transition-all duration-200;
+}
+
+.glass-press {
+  @apply active:bg-background/80 active:shadow-glass-press;
+}
+
+/* Button styles */
+.btn {
+  @apply inline-flex items-center justify-center rounded-lg text-sm font-medium
+         transition-all duration-200 ease-out-expo
+         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2
+         disabled:opacity-50 disabled:pointer-events-none ring-offset-background
+         active:animate-button-press;
+}
+
+.btn-primary {
+  @apply glass glass-hover glass-press text-primary-foreground;
+}
+
+.btn-secondary {
+  @apply glass glass-hover glass-press text-secondary-foreground;
+}
+
+.btn-ghost {
+  @apply hover:bg-accent/50 hover:text-accent-foreground;
+}
+
+/* Input styles */
+.input {
+  @apply glass flex h-10 w-full rounded-lg border border-white/10 bg-background/40 px-3 py-2 text-sm
+         ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium
+         placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2
+         focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50
+         transition-all duration-200 ease-out-expo;
+}
+
 :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
@@ -17,4 +144,50 @@ body {
 #root {
   width: 100%;
   height: 100vh;
+}
+
+/* Component styles */
+@layer components {
+  .card {
+    @apply glass rounded-lg border border-white/10 shadow-glass;
+  }
+
+  .card-header {
+    @apply flex flex-col space-y-1.5 p-6;
+  }
+
+  .card-title {
+    @apply text-2xl font-semibold leading-none tracking-tight;
+  }
+
+  .card-description {
+    @apply text-sm text-muted-foreground;
+  }
+
+  .card-content {
+    @apply p-6 pt-0;
+  }
+
+  .card-footer {
+    @apply flex items-center p-6 pt-0;
+  }
+}
+
+/* Utility classes */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .text-pretty {
+    text-wrap: pretty;
+  }
+
+  .backdrop-blur {
+    backdrop-filter: blur(8px);
+  }
+
+  .glass {
+    @apply bg-background/60 backdrop-blur supports-[backdrop-filter]:bg-background/40;
+  }
 } 

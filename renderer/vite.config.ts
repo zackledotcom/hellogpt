@@ -15,6 +15,8 @@ export default defineConfig({
     emptyOutDir: true
   },
   server: {
-    port: 3000
-  }
+    port: 5173,
+    strictPort: true
+  },
+  base: process.env.NODE_ENV === 'development' ? '/' : './'
 }); 

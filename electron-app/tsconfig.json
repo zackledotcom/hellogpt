@@ -1,4 +1,4 @@
-{
+{                                                                                     
   "compilerOptions": {
     "target": "ES2022",
     "module": "CommonJS",
@@ -8,14 +8,22 @@
     "baseUrl": "./src",
     "paths": {
       "@ipc/*": ["ipc/*"],
-      "@shared/*": ["shared/*"],
+      "@shared/*": ["../../packages/shared/*"],
       "@types/*": ["types/*"]
     },
+    "typeRoots": [
+      "./node_modules/@types",
+      "./src/types"
+    ],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "composite": true
   },
-  "include": ["src"]
-} 
+  "include": ["src"],
+  "references": [
+    { "path": "../packages/shared" }
+  ]
+}

@@ -8,6 +8,8 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useMemory } from '../hooks/useMemory';
 import toast from 'react-hot-toast';
+import { formatDistanceToNow } from 'date-fns';
+import { Card } from './ui/card';
 
 interface Toast {
   id: string;
@@ -30,8 +32,8 @@ interface Reaction {
 
 interface ChatMessageListProps {
   messages: ChatMessage[];
-  isThinking: boolean;
-  isTyping: boolean;
+  isThinking?: boolean;
+  isTyping?: boolean;
   onStopResponse?: () => void;
   onReaction?: (messageId: string, emoji: string) => void;
 }
@@ -44,13 +46,7 @@ interface CodeComponentProps {
 
 const REACTIONS = ['👍', '👎', '❤️', '😢', '😡', '🤔', '😮', '😂'] as const;
 
-export const ChatMessageList: React.FC<ChatMessageListProps> = ({
-  messages,
-  isThinking,
-  isTyping,
-  onStopResponse,
-  onReaction,
-}) => {
+export function ChatMessageList({ messages, isThinking = false, isTyping = false, onStopResponse, onReaction }: ChatMessageListProps) {
   const { storeMemory } = useMemory();
   const [corrections, setCorrections] = useState<Record<string, Correction>>({});
   const [reactions, setReactions] = useState<Record<string, Reaction[]>>({});
@@ -150,61 +146,42 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
   );
 
   return (
-    <div className="flex flex-col space-y-3 px-4 pt-4">
-      <AnimatePresence initial={false}>
-        {messages.map((message) => {
-          const correction = corrections[message.id];
-          const isAssistant = message.role === Role.Assistant;
-          const content = correction?.text ?? message.content;
-
-          return (
-            <motion.div
-              key={message.id}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              className={`text-sm leading-relaxed ${isAssistant ? 'text-left' : 'text-right'} group`}
-            >
-              <div onDoubleClick={() => isAssistant && handleCorrection(message.id, message.content)}>
-                {renderMessageContent(content)}
-              </div>
-              <span className="text-[10px] text-gray-400 opacity-30 mt-1 block select-none">
-                {new Date(message.timestamp || Date.now()).toLocaleTimeString()}
-              </span>
-              {correction && (
-                <motion.div
-                  className="text-[11px] text-blue-500 mt-1 italic"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                >
-                  ✅ Correction learned
-                </motion.div>
-              )}
-            </motion.div>
-          );
-        })}
-        {(isTyping || isThinking) && (
-          <motion.div
-            key="status"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="text-left text-sm text-gray-500 px-1"
+    <div className="space-y-4">
+      {messages.map((msg) => (
+        <div
+          key={msg.id}
+          className={`flex ${
+            msg.role === 'user' ? 'justify-end' : 'justify-start'
+          }`}
+        >
+          <Card
+            className={`max-w-[80%] p-4 ${
+              msg.role === 'user'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted'
+            }`}
           >
-            {isTyping && <span className="animate-pulse">Assistant is typing...</span>}
-            {isThinking && <span className="italic ml-2">Thinking...</span>}
-            {onStopResponse && (
-              <button
-                onClick={onStopResponse}
-                className="ml-3 text-xs text-gray-500 hover:text-gray-700"
-              >
-                Stop
-              </button>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <p className="whitespace-pre-wrap">{msg.content}</p>
+            <div className="mt-2 text-xs opacity-70">
+              {formatDistanceToNow(msg.timestamp, { addSuffix: true })}
+            </div>
+          </Card>
+        </div>
+      ))}
+      {isThinking && (
+        <div className="flex justify-start">
+          <Card className="max-w-[80%] p-4 bg-muted">
+            <p className="text-muted-foreground">Thinking...</p>
+          </Card>
+        </div>
+      )}
+      {isTyping && (
+        <div className="flex justify-start">
+          <Card className="max-w-[80%] p-4 bg-muted">
+            <p className="text-muted-foreground">Typing...</p>
+          </Card>
+        </div>
+      )}
     </div>
   );
-};
+}

@@ -1,19 +1,33 @@
-import type { ChatMessage, ChatResponse, OllamaModel, OllamaConnectionStatus } from '../../types/ipc';
+import type { ChatMessage, ChatResponse, OllamaModel, OllamaConnectionStatus, ModelLoadingState } from '../../types/ipc';
+import type { RequestQueueItem, StreamParserOptions } from '../../types/ollama';
+
 import { EventEmitter } from 'events';
+import { logger } from '../../utils/logger';
 
-interface RequestQueueItem {
-  id: string;
-  request: () => Promise<any>;
-  retries: number;
-  maxRetries: number;
-  resolve: (value: any) => void;
-  reject: (error: Error) => void;
-}
+const MAX_RETRIES = 3;
+const TIMEOUT_MS = 300000; // 5 minutes
+const POLL_INTERVAL = 500; // 500ms
 
-interface StreamParserOptions {
-  onChunk: (chunk: string) => void;
-  onError: (error: Error) => void;
-  onComplete: () => void;
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function withRetryAndTimeout<T>(
+  fn: () => Promise<T>,
+  retries = MAX_RETRIES
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    return await fn();
+  } catch (error) {
+    if (retries > 0 && !controller.signal.aborted) {
+      await delay(1000 * (MAX_RETRIES - retries));
+      return withRetryAndTimeout(fn, retries - 1);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export class OllamaClient extends EventEmitter {
@@ -27,6 +41,8 @@ export class OllamaClient extends EventEmitter {
   private isProcessingQueue: boolean;
   private healthCheckInterval: NodeJS.Timeout | null;
   private connectionStatus: OllamaConnectionStatus;
+  private loadingState: ModelLoadingState;
+  private abortController: AbortController | null;
 
   private constructor() {
     super();
@@ -39,6 +55,14 @@ export class OllamaClient extends EventEmitter {
     this.isProcessingQueue = false;
     this.healthCheckInterval = null;
     this.connectionStatus = { status: 'disconnected', lastChecked: Date.now() };
+    this.loadingState = {
+      status: 'loaded',
+      isLoading: false,
+      modelName: '',
+      progress: 0,
+      estimatedTimeRemaining: 0
+    };
+    this.abortController = null;
   }
 
   public static getInstance(): OllamaClient {
@@ -258,10 +282,17 @@ export class OllamaClient extends EventEmitter {
   }
 
   public async setModel(modelName: string): Promise<void> {
-    return this.queueRequest(async () => {
-      this.currentModel = modelName;
-      this.emit('modelChanged', modelName);
-    });
+    if (this.currentModel === modelName) return;
+
+    try {
+      await withRetryAndTimeout(async () => {
+        await this.loadModel(modelName);
+        this.currentModel = modelName;
+      });
+    } catch (error) {
+      console.error('Error setting model:', error);
+      throw error;
+    }
   }
 
   public async checkConnection(): Promise<OllamaConnectionStatus> {
@@ -307,4 +338,131 @@ export class OllamaClient extends EventEmitter {
   public getCurrentModel(): string {
     return this.currentModel;
   }
-} 
+
+  private async getModelStatus(modelName: string): Promise<{ progress: number }> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/tags`);
+      const data = await response.json();
+      const model = data.models.find((m: any) => m.name === modelName);
+      return {
+        progress: model ? 100 : 0
+      };
+    } catch (error) {
+      console.error('Error getting model status:', error);
+      return { progress: 0 };
+    }
+  }
+
+  private async parseStreamProgress(response: Response): Promise<void> {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('No response body');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const data = JSON.parse(line);
+          if (data.status === 'pulling') {
+            this.loadingState.progress = data.completed || 0;
+            this.loadingState.estimatedTimeRemaining = data.remaining || 0;
+            this.emit('modelLoadingStateChanged', this.loadingState);
+          }
+        } catch (error) {
+          console.error('Error parsing stream:', error);
+        }
+      }
+    }
+  }
+
+  private async loadModel(modelName: string): Promise<void> {
+    const startTime = Date.now();
+    this.loadingState = {
+      status: 'loading',
+      isLoading: true,
+      modelName,
+      progress: 0,
+      estimatedTimeRemaining: 0
+    };
+    this.emit('modelLoadingStateChanged', this.loadingState);
+
+    try {
+      // Poll model status every 500ms
+      const pollInterval = setInterval(async () => {
+        const status = await this.getModelStatus(modelName);
+        this.loadingState.progress = status.progress;
+        this.emit('modelLoadingStateChanged', this.loadingState);
+      }, POLL_INTERVAL);
+
+      this.abortController = new AbortController();
+      const response = await fetch(`${this.baseUrl}/api/pull`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: modelName, stream: true }),
+        signal: this.abortController.signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to load model: ${response.statusText}`);
+      }
+
+      // Parse streaming progress updates
+      await this.parseStreamProgress(response);
+
+      clearInterval(pollInterval);
+      this.loadingState.isLoading = false;
+      this.emit('modelLoadingStateChanged', this.loadingState);
+    } catch (error) {
+      this.loadingState.isLoading = false;
+      this.loadingState.error = error instanceof Error ? error.message : 'Failed to load model';
+      this.emit('modelLoadingStateChanged', this.loadingState);
+      throw error;
+    } finally {
+      this.abortController = null;
+    }
+  }
+
+  public async cancelLoad(): Promise<void> {
+    if (this.abortController) {
+      this.abortController.abort();
+      this.loadingState.isLoading = false;
+      this.loadingState.error = 'Model loading cancelled';
+      this.emit('modelLoadingStateChanged', this.loadingState);
+    }
+  }
+
+  async generate(message: string): Promise<{ response: string }> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: this.currentModel,
+          prompt: message,
+          stream: false,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to generate response: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return { response: data.response };
+    } catch (error) {
+      logger.error('Error generating response:', error);
+      throw error;
+    }
+  }
+}

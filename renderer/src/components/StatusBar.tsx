@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOllama } from '../hooks/useOllama';
+import { useModelStatus } from '../hooks/useModelStatus';
 import { Plug, Unplug, ChevronDown, AlertCircle, CheckCircle2, Loader2, BatteryFull, BatteryMedium, BatteryLow } from 'lucide-react';
 
 export const StatusBar: React.FC = () => {
@@ -14,6 +15,14 @@ export const StatusBar: React.FC = () => {
     checkHealth,
     healthScore = 100 // Default to 100 if not provided
   } = useOllama();
+
+  const {
+    isLoading: isModelLoading,
+    modelName: loadingModelName,
+    progress,
+    estimatedTimeRemaining,
+    error: modelError
+  } = useModelStatus();
 
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [lastHealthCheck, setLastHealthCheck] = useState<number>(Date.now());
@@ -29,8 +38,9 @@ export const StatusBar: React.FC = () => {
   }, [checkHealth]);
 
   const getStatusIcon = () => {
+    if (isModelLoading) return <Loader2 className="w-4 h-4 animate-spin text-blue-500" />;
     if (isLoading) return <Loader2 className="w-4 h-4 animate-spin text-blue-500" />;
-    if (error) return <AlertCircle className="w-4 h-4 text-red-500" />;
+    if (error || modelError) return <AlertCircle className="w-4 h-4 text-red-500" />;
     return isConnected ? <Plug className="w-4 h-4 text-green-500" /> : <Unplug className="w-4 h-4 text-gray-500" />;
   };
 
@@ -68,16 +78,31 @@ export const StatusBar: React.FC = () => {
             >
               {getStatusIcon()}
               <span className="text-sm font-medium text-gray-300">
-                {isLoading ? 'Checking...' : isConnected ? 'Connected' : 'Disconnected'}
+                {isModelLoading 
+                  ? `Loading ${loadingModelName} (${progress}%)`
+                  : isLoading 
+                    ? 'Checking...' 
+                    : isConnected 
+                      ? 'Connected' 
+                      : 'Disconnected'}
               </span>
             </motion.div>
-            {error && (
+            {(error || modelError) && (
               <motion.div
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 className="text-xs text-red-400 max-w-[200px] truncate"
               >
-                {error}
+                {error || modelError}
+              </motion.div>
+            )}
+            {isModelLoading && estimatedTimeRemaining > 0 && (
+              <motion.div
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="text-xs text-gray-400"
+              >
+                {Math.ceil(estimatedTimeRemaining)}s remaining
               </motion.div>
             )}
           </div>
@@ -87,6 +112,7 @@ export const StatusBar: React.FC = () => {
             <button
               onClick={() => setIsModelMenuOpen(!isModelMenuOpen)}
               className="flex items-center space-x-2 px-3 py-1.5 rounded-md bg-gray-800/50 hover:bg-gray-800 transition-colors"
+              disabled={isModelLoading}
             >
               <span className="text-sm font-medium text-gray-200">{currentModel || 'Select Model'}</span>
               <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isModelMenuOpen ? 'rotate-180' : ''}`} />
@@ -108,6 +134,7 @@ export const StatusBar: React.FC = () => {
                         className={`w-full px-4 py-2 text-sm text-left hover:bg-gray-700/50 transition-colors ${
                           model.name === currentModel ? 'bg-gray-700/50 text-blue-400' : 'text-gray-200'
                         }`}
+                        disabled={isModelLoading}
                       >
                         <div className="flex items-center justify-between">
                           <span>{model.name}</span>
@@ -134,6 +161,7 @@ export const StatusBar: React.FC = () => {
               whileTap={{ scale: 0.95 }}
               onClick={handleHealthCheck}
               className="text-xs text-gray-400 hover:text-gray-200 transition-colors"
+              disabled={isModelLoading}
             >
               Last check: {new Date(lastHealthCheck).toLocaleTimeString()}
             </motion.button>

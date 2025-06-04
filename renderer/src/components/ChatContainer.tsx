@@ -1,99 +1,61 @@
-import React, { useState, useRef, useLayoutEffect } from 'react';
-import { ChatMessage, Role } from '../types/ipc';
-import { useChat } from '../hooks/useChat';
-import { useModelStatus } from '../hooks/useModelStatus';
-import { ModelLoadingOverlay } from './ModelLoadingOverlay';
+import React, { useState, useCallback } from 'react';
 import { ChatInput } from './ChatInput';
 import { ChatMessageList } from './ChatMessageList';
+import { useConversation } from '@/hooks/useConversation';
+import type { Conversation, ChatMessage } from '@/types/ipc';
+import { Role } from '@/types/ipc';
 
-const generateId = () =>
-  `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+interface ChatContainerProps {
+  currentConversation: Conversation | null;
+  onSendMessage: (content: string) => Promise<void>;
+}
 
-export const ChatContainer: React.FC = () => {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [inputValue, setInputValue] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { sendMessage, isStreaming } = useChat();
-  const {
-    isLoading,
-    modelName,
-    progress,
-    estimatedTimeRemaining,
-    error,
-  } = useModelStatus();
+export function ChatContainer({ currentConversation, onSendMessage }: ChatContainerProps) {
+  const [isThinking, setIsThinking] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
 
-  // Optional future-proofing for per-message state
-  // const [messageStates, setMessageStates] = useState<Record<string, { isStreaming: boolean, error?: string }>>({});
+  const handleMessageSent = useCallback((message: ChatMessage) => {
+    setIsThinking(true);
+  }, []);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  const handleStreamComplete = useCallback(() => {
+    setIsThinking(false);
+    setIsStreaming(false);
+  }, []);
 
-  useLayoutEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+  const handleStopStream = useCallback(() => {
+    setIsStreaming(false);
+    setIsThinking(false);
+  }, []);
 
-  const handleSendMessage = async () => {
-    if (!inputValue.trim()) return;
-
-    const userMessage: ChatMessage = {
-      id: generateId(),
-      role: Role.User,
-      content: inputValue.trim(),
-      timestamp: Date.now(),
-    };
-
-    setInputValue('');
-
+  const handleSendMessage = async (content: string) => {
+    setIsStreaming(true);
     try {
-      const response = await sendMessage(userMessage);
-
-      const assistantMessage: ChatMessage = {
-        id: generateId(),
-        role: Role.Assistant,
-        content: response.content,
-        timestamp: response.timestamp,
-      };
-
-      setMessages((prev) => [...prev, userMessage, assistantMessage]);
-    } catch (err) {
-      console.error('Error sending message:', err);
-
-      const errorMessage: ChatMessage = {
-        id: generateId(),
-        role: Role.Assistant,
-        content: '⚠️ Failed to generate a response.',
-        timestamp: Date.now(),
-      };
-
-      setMessages((prev) => [...prev, userMessage, errorMessage]);
+      await onSendMessage(content);
+    } finally {
+      setIsStreaming(false);
     }
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100">
+    <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-4">
-        <ChatMessageList messages={messages} />
-        <div ref={messagesEndRef} />
-      </div>
-
-      <div className="border-t border-gray-200 p-4 bg-white">
-        <ChatInput
-          value={inputValue}
-          onChange={setInputValue}
-          onSend={handleSendMessage}
-          disabled={isLoading} // streaming no longer blocks typing
+        <ChatMessageList 
+          messages={currentConversation?.messages || []} 
+          isThinking={isThinking}
+          isTyping={isTyping}
         />
       </div>
-
-      {isLoading && (
-        <ModelLoadingOverlay
-          modelName={modelName}
-          progress={progress}
-          estimatedTimeRemaining={estimatedTimeRemaining}
-          error={error}
+      <div className="border-t border-gray-200 p-4">
+        <ChatInput 
+          onSendMessage={handleSendMessage}
+          onMessageSent={handleMessageSent}
+          onStreamComplete={handleStreamComplete}
+          isStreaming={isStreaming}
+          onStopStream={handleStopStream}
         />
-      )}
+      </div>
     </div>
   );
-};
+}

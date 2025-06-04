@@ -67,8 +67,8 @@ export default defineConfig(({ mode }) => {
       extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json'],
     },
     server: {
-      port: 5173,
-      strictPort: true,
+      port: 3013,
+      strictPort: false,
       // Enable HMR
       hmr: {
         overlay: true,
@@ -80,6 +80,7 @@ export default defineConfig(({ mode }) => {
     },
     // Configure CSS options
     css: {
+      postcss: path.resolve(__dirname, 'postcss.config.js'),
       // Enable CSS modules
       modules: {
         localsConvention: 'camelCase',
@@ -106,4 +107,4 @@ export default defineConfig(({ mode }) => {
     logLevel: 'info',
     clearScreen: false,
   };
-}); 
+});
