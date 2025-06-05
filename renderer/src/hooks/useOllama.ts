@@ -1,130 +1,66 @@
-import { useState, useCallback, useEffect } from 'react';
-import type { ChatMessage, ChatResponse, OllamaModel, OllamaConnectionStatus, AppStatus, IpcMessageMap } from '../types/ipc';
-
-declare global {
-  interface Window {
-    electron: {
-      ipc: {
-        invoke: <K extends keyof IpcMessageMap>(
-          channel: K,
-          request: IpcMessageMap[K]['request']
-        ) => Promise<IpcMessageMap[K]['response']>;
-        on: <K extends string>(
-          channel: K,
-          callback: (...args: any[]) => void
-        ) => () => void;
-      };
-    };
-  }
-}
+import { useState, useEffect } from 'react';
+import type { OllamaModel, ModelLoadingState } from '@electron-app/types/ollama';
 
 export function useOllama() {
-  const [isConnected, setIsConnected] = useState(false);
-  const [currentModel, setCurrentModel] = useState<string>('');
-  const [availableModels, setAvailableModels] = useState<OllamaModel[]>([]);
+  const [models, setModels] = useState<OllamaModel[]>([]);
+  const [currentModel, setCurrentModel] = useState<OllamaModel | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [healthScore, setHealthScore] = useState(100);
+  const [loadingState, setLoadingState] = useState<ModelLoadingState | null>(null);
 
-  // Health check
-  const checkHealth = useCallback(async () => {
+  const loadModels = async () => {
     try {
-      const status = await window.electron.ipc.invoke('app:health-check', undefined);
-      setIsConnected(status.status === 'healthy');
-      setCurrentModel(status.details?.currentModel || '');
-      setHealthScore(status.details?.healthScore || 100);
+      setIsLoading(true);
+      const loadedModels = await window.electron.ipc.invoke('ollama:list-models', undefined);
+      setModels(loadedModels);
+      setError(null);
     } catch (err) {
-      setIsConnected(false);
-      setError(err instanceof Error ? err.message : 'Failed to check health');
-      setHealthScore(0);
-    }
-  }, []);
-
-  // List models
-  const listModels = useCallback(async () => {
-    try {
-      const { models } = await window.electron.ipc.invoke('ollama:list-models', undefined);
-      setAvailableModels(models);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to list models');
-    }
-  }, []);
-
-  // Set model
-  const setModel = useCallback(async (modelName: string) => {
-    try {
-      await window.electron.ipc.invoke('ollama:set-model', { modelName });
-      setCurrentModel(modelName);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to set model');
-    }
-  }, []);
-
-  // Send message
-  const sendMessage = useCallback(async (message: ChatMessage): Promise<ChatResponse> => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      return await window.electron.ipc.invoke('chat:send-message', message);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send message');
-      throw err;
+      setError(err instanceof Error ? err.message : 'Failed to load models');
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  };
 
-  // Send message stream
-  const sendMessageStream = useCallback((
-    message: ChatMessage,
-    callbacks: {
-      onChunk: (chunk: string) => void;
-      onError: (error: string) => void;
-      onComplete: () => void;
-    }
-  ) => {
-    setIsLoading(true);
-    setError(null);
-
-    const cleanup = [
-      window.electron.ipc.on('chat:stream-chunk', callbacks.onChunk),
-      window.electron.ipc.on('chat:stream-error', callbacks.onError),
-      window.electron.ipc.on('chat:stream-complete', () => {
-        setIsLoading(false);
-        callbacks.onComplete();
-      })
-    ];
-
-    window.electron.ipc.invoke('chat:send-message-stream', message).catch((err) => {
-      setError(err instanceof Error ? err.message : 'Failed to send message');
-      callbacks.onError(err instanceof Error ? err.message : 'Failed to send message');
+  const setModel = async (modelName: string) => {
+    try {
+      setIsLoading(true);
+      await window.electron.ipc.invoke('ollama:set-model', { modelName });
+      const model = models.find(m => m.name === modelName);
+      if (model) {
+        setCurrentModel(model);
+      }
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to set model');
+    } finally {
       setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadModels();
+
+    const unsubscribe = window.electron.ipc.on('ollama:model-loading-state', (state: ModelLoadingState) => {
+      setLoadingState(state);
+      if (state.status === 'loaded') {
+        setIsLoading(false);
+      } else if (state.status === 'loading') {
+        setIsLoading(true);
+      }
     });
 
-    return () => cleanup.forEach(fn => fn());
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
-  // Initial setup
-  useEffect(() => {
-    checkHealth();
-    listModels();
-
-    // Set up health check interval
-    const interval = setInterval(checkHealth, 30000);
-    return () => clearInterval(interval);
-  }, [checkHealth, listModels]);
-
   return {
-    isConnected,
+    models,
     currentModel,
-    availableModels,
     isLoading,
     error,
-    sendMessage,
-    sendMessageStream,
-    setModel,
-    checkHealth,
-    listModels,
-    healthScore
+    loadingState,
+    loadModels,
+    setModel
   };
 } 

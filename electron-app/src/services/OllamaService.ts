@@ -19,14 +19,27 @@ export interface OllamaModel {
 }
 
 export class OllamaService {
+  private static instance: OllamaService;
   private client: OllamaClient;
   private currentModel: string;
   private readonly baseUrl = 'http://localhost:11434';
   private initializationPromise: Promise<void> | null = null;
+  private fallbackResponses: Map<string, string> = new Map([
+    ['error', 'I apologize, but I am currently unable to process your request. The Ollama service is temporarily unavailable.'],
+    ['greeting', 'Hello! I am currently operating in limited mode. Some features may be unavailable.'],
+    ['help', 'I can help you with basic tasks, but advanced features are currently unavailable due to service limitations.']
+  ]);
 
-  constructor() {
+  private constructor() {
     this.client = OllamaClient.getInstance();
     this.currentModel = '';
+  }
+
+  public static getInstance(): OllamaService {
+    if (!OllamaService.instance) {
+      OllamaService.instance = new OllamaService();
+    }
+    return OllamaService.instance;
   }
 
   async initialize(): Promise<void> {
@@ -61,8 +74,31 @@ export class OllamaService {
     }
   }
 
+  private getFallbackResponse(message: string): ChatResponse {
+    // Simple keyword matching for fallback responses
+    const lowerMessage = message.toLowerCase();
+    let responseType = 'error';
+
+    if (lowerMessage.includes('hello') || lowerMessage.includes('hi')) {
+      responseType = 'greeting';
+    } else if (lowerMessage.includes('help') || lowerMessage.includes('what can you do')) {
+      responseType = 'help';
+    }
+
+    return {
+      id: uuidv4(),
+      content: this.fallbackResponses.get(responseType) || this.fallbackResponses.get('error')!,
+      role: Role.Assistant,
+      timestamp: Date.now()
+    };
+  }
+
   async listModels(): Promise<{ models: OllamaModel[] }> {
     try {
+      if (this.client.isInFallbackMode()) {
+        throw new Error('Service is in fallback mode');
+      }
+
       const response = await fetch(`${this.baseUrl}/api/tags`);
       if (!response.ok) {
         throw new Error(`Failed to list models: ${response.statusText}`);
@@ -111,6 +147,10 @@ export class OllamaService {
 
   async setModel(modelName: string): Promise<void> {
     try {
+      if (this.client.isInFallbackMode()) {
+        throw new Error('Cannot set model: Service is in fallback mode');
+      }
+
       const models = await this.listModels();
       if (!models.models.some(model => model.name === modelName)) {
         throw new Error(`Model ${modelName} not found`);
@@ -128,6 +168,10 @@ export class OllamaService {
 
   async cancelLoad(): Promise<void> {
     try {
+      if (this.client.isInFallbackMode()) {
+        throw new Error('Cannot cancel load: Service is in fallback mode');
+      }
+
       const response = await fetch(`${this.baseUrl}/api/cancel`, {
         method: 'POST',
       });
@@ -142,7 +186,8 @@ export class OllamaService {
 
   async generateResponse(message: string): Promise<ChatResponse> {
     if (!this.client.isServiceConnected()) {
-      throw new Error('Cannot generate response: Ollama service is not connected');
+      logger.warn('Generating fallback response due to service unavailability');
+      return this.getFallbackResponse(message);
     }
 
     try {
@@ -155,11 +200,29 @@ export class OllamaService {
       };
     } catch (error) {
       logger.error('Error generating response:', error);
-      throw error;
+      return this.getFallbackResponse(message);
     }
   }
 
   isServiceAvailable(): boolean {
     return this.client.isServiceConnected();
+  }
+
+  isInFallbackMode(): boolean {
+    return this.client.isInFallbackMode();
+  }
+
+  getConnectionStatus(): { 
+    isConnected: boolean; 
+    isFallbackMode: boolean; 
+    lastSuccessfulConnection: number;
+    connectionAttempts: number;
+  } {
+    return {
+      isConnected: this.client.isServiceConnected(),
+      isFallbackMode: this.client.isInFallbackMode(),
+      lastSuccessfulConnection: this.client.getLastSuccessfulConnection(),
+      connectionAttempts: this.client.getConnectionAttempts()
+    };
   }
 } 

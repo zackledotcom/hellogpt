@@ -10,17 +10,38 @@ import { logger } from '../utils/logger';
 import type { ChatMessage } from '../types/ipc';
 import { ChatService } from '../services/ChatService';
 import { EmbeddingService } from '../services/EmbeddingService';
+import { ServiceManager } from '../services/ServiceManager';
+import type { EmbeddingConfig } from '../services/EmbeddingService';
 
 const client = OllamaClient.getInstance();
 const messageStore = new MessageStore();
+const serviceManager = ServiceManager.getInstance();
+
+// Initialize services
+const ollamaService = OllamaService.getInstance();
+const embeddingService = EmbeddingService.getInstance();
+const vectorStoreService = VectorStoreService.getInstance();
 const memoryService = MemoryService.getInstance();
+const chatService = ChatService.getInstance();
+
+// Helper function to check service availability
+const withServiceCheck = async <T>(
+  serviceName: string,
+  fn: () => Promise<T>
+): Promise<{ success: boolean; error?: string; result?: T }> => {
+  try {
+    const result = await fn();
+    return { success: true, result };
+  } catch (error) {
+    console.error(`Service ${serviceName} error:`, error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : `Service ${serviceName} error` 
+    };
+  }
+};
 
 export async function setupIpcHandlers(): Promise<void> {
-  const ollamaService = new OllamaService();
-  const embeddingService = new EmbeddingService(ollamaService);
-  const vectorStoreService = new VectorStoreService(embeddingService);
-  const chatService = new ChatService(ollamaService, vectorStoreService);
-
   // Initialize services
   await messageStore.initialize();
   await memoryService.initialize();
@@ -93,93 +114,155 @@ export async function setupIpcHandlers(): Promise<void> {
     }
   });
 
-  // App status handlers
-  ipcMain.handle(IPC_CHANNELS.APP.HEALTH_CHECK, async () => {
-    try {
-      const ollamaStatus = await ollamaService.checkConnection();
-      return {
-        status: ollamaStatus.status === 'connected' ? 'healthy' : 'unhealthy',
-        timestamp: Date.now(),
-        details: {
-          ollamaConnected: ollamaStatus.status === 'connected',
-          currentModel: ollamaService.getCurrentModel(),
-        },
-      };
-    } catch (error) {
-      logger.error('Error checking health:', error);
-      throw error;
-    }
-  });
-
   // Ollama model handlers
-  ipcMain.handle(IPC_CHANNELS.OLLAMA.LIST_MODELS, async () => {
-    try {
-      const models = await ollamaService.listModels();
-      return { models };
-    } catch (error) {
-      logger.error('Error listing models:', error);
-      throw error;
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.OLLAMA.LIST_MODELS, () =>
+    withServiceCheck('ollama', async () => {
+      const service = OllamaService.getInstance();
+      return service.listModels();
+    })
+  );
 
-  ipcMain.handle(IPC_CHANNELS.OLLAMA.SET_MODEL, async (_event, modelName) => {
-    try {
-      await ollamaService.setModel(modelName);
-    } catch (error) {
-      logger.error('Error setting model:', error);
-      throw error;
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.OLLAMA.SET_MODEL, (_, modelName: string) =>
+    withServiceCheck('ollama', async () => {
+      const service = OllamaService.getInstance();
+      return service.setModel(modelName);
+    })
+  );
 
-  ipcMain.handle(IPC_CHANNELS.OLLAMA.CHECK_CONNECTION, async () => {
-    try {
-      return await ollamaService.checkConnection();
-    } catch (error) {
-      logger.error('Error checking connection:', error);
-      throw error;
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.OLLAMA.CHECK_CONNECTION, () =>
+    withServiceCheck('ollama', async () => {
+      const service = OllamaService.getInstance();
+      return service.checkConnection();
+    })
+  );
 
-  ipcMain.handle(IPC_CHANNELS.OLLAMA.CANCEL_LOAD, async () => {
-    try {
-      await ollamaService.cancelLoad();
-    } catch (error) {
-      logger.error('Error canceling load:', error);
-      throw error;
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.OLLAMA.CANCEL_LOAD, () =>
+    withServiceCheck('ollama', async () => {
+      const service = OllamaService.getInstance();
+      return service.cancelLoad();
+    })
+  );
 
-  // Start health check monitoring
-  client.startHealthCheck();
+  // Embedding configuration handlers
+  ipcMain.handle(IPC_CHANNELS.EMBEDDING.GET_CONFIG, () =>
+    withServiceCheck('embedding', async () => {
+      const service = EmbeddingService.getInstance();
+      return service.getConfig();
+    })
+  );
 
-  // Cleanup on app quit
-  process.on('exit', () => {
-    client.stopHealthCheck();
-  });
+  ipcMain.handle(IPC_CHANNELS.EMBEDDING.UPDATE_CONFIG, (_, config: Partial<EmbeddingConfig>) =>
+    withServiceCheck('embedding', async () => {
+      const service = EmbeddingService.getInstance();
+      return service.updateConfig(config);
+    })
+  );
+
+  // Vector store handlers
+  ipcMain.handle(IPC_CHANNELS.VECTOR.SEARCH, (_, query: string) =>
+    withServiceCheck('vectorStore', async () => {
+      const service = VectorStoreService.getInstance();
+      return service.searchSimilar(query);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.VECTOR.ADD, (_, document: any) =>
+    withServiceCheck('vectorStore', async () => {
+      const service = VectorStoreService.getInstance();
+      return service.addDocument(document);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.VECTOR.DELETE, (_, id: string) =>
+    withServiceCheck('vectorStore', async () => {
+      const service = VectorStoreService.getInstance();
+      return service.deleteDocument(id);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.VECTOR.CLEAR, () =>
+    withServiceCheck('vectorStore', async () => {
+      const service = VectorStoreService.getInstance();
+      return service.clear();
+    })
+  );
 
   // Memory service handlers
-  ipcMain.handle(IPC_CHANNELS.MEMORY.INITIALIZE, async () => {
-    return memoryService.initialize();
+  ipcMain.handle(IPC_CHANNELS.MEMORY.INITIALIZE, () =>
+    withServiceCheck('memory', async () => {
+      const service = MemoryService.getInstance();
+      return service.initialize();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MEMORY.STORE, async (_, chunk: MemoryChunk) => {
+    try {
+      const memoryService = MemoryService.getInstance();
+      await memoryService.store(chunk);
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to store memory:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to store memory' 
+      };
+    }
   });
 
-  ipcMain.handle(IPC_CHANNELS.MEMORY.STORE, async (_, { content, metadata }) => {
-    return memoryService.store(content, metadata);
+  ipcMain.handle(IPC_CHANNELS.MEMORY.SEARCH, async (_, query: string) => {
+    try {
+      const memoryService = MemoryService.getInstance();
+      const results = await memoryService.search(query);
+      return { success: true, results };
+    } catch (error) {
+      console.error('Failed to search memories:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to search memories' 
+      };
+    }
   });
 
-  ipcMain.handle(IPC_CHANNELS.MEMORY.SEARCH, async (_, { query, options }) => {
-    return memoryService.search(query, options);
+  ipcMain.handle(IPC_CHANNELS.MEMORY.GET_RECENT, async (_, limit: number = 10) => {
+    try {
+      const memoryService = MemoryService.getInstance();
+      const results = await memoryService.getRecent(limit);
+      return { success: true, results };
+    } catch (error) {
+      console.error('Failed to get recent memories:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to get recent memories' 
+      };
+    }
   });
 
-  ipcMain.handle(IPC_CHANNELS.MEMORY.GET_RECENT, async (_, { limit }) => {
-    return memoryService.getRecent(limit);
-  });
-
-  ipcMain.handle(IPC_CHANNELS.MEMORY.DELETE, async (_, { id }) => {
-    return memoryService.delete(id);
+  ipcMain.handle(IPC_CHANNELS.MEMORY.DELETE, async (_, id: string) => {
+    try {
+      const memoryService = MemoryService.getInstance();
+      await memoryService.delete(id);
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to delete memory:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to delete memory' 
+      };
+    }
   });
 
   ipcMain.handle(IPC_CHANNELS.MEMORY.CLEAR, async () => {
-    return memoryService.clear();
+    try {
+      const memoryService = MemoryService.getInstance();
+      await memoryService.clear();
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to clear memories:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to clear memories' 
+      };
+    }
   });
 
   // Memory service event listeners
@@ -220,59 +303,28 @@ export async function setupIpcHandlers(): Promise<void> {
     });
   });
 
-  // Vector store handlers
-  ipcMain.handle(IPC_CHANNELS.VECTOR.SEARCH, async (_event, query) => {
-    try {
-      return await vectorStoreService.searchSimilar(query);
-    } catch (error) {
-      logger.error('Error searching vector store:', error);
-      throw error;
-    }
+  // Service status handlers
+  ipcMain.handle(IPC_CHANNELS.APP.HEALTH_CHECK, () => {
+    const statuses = serviceManager.getAllServiceStatuses();
+    return Object.fromEntries(statuses);
   });
 
-  ipcMain.handle(IPC_CHANNELS.VECTOR.ADD, async (_event, document) => {
-    try {
-      await vectorStoreService.addDocument(document);
-    } catch (error) {
-      logger.error('Error adding document to vector store:', error);
-      throw error;
-    }
+  // Setup event listeners for service status changes
+  serviceManager.on('serviceStatusChanged', ({ serviceName, status, error }) => {
+    BrowserWindow.getAllWindows().forEach((window) => {
+      window.webContents.send(IPC_CHANNELS.APP.SERVICE_STATUS_CHANGED, {
+        serviceName,
+        status,
+        error,
+      });
+    });
   });
 
-  ipcMain.handle(IPC_CHANNELS.VECTOR.DELETE, async (_event, id) => {
-    try {
-      await vectorStoreService.deleteDocument(id);
-    } catch (error) {
-      logger.error('Error deleting document from vector store:', error);
-      throw error;
-    }
-  });
+  // Start health check monitoring
+  client.startHealthCheck();
 
-  ipcMain.handle(IPC_CHANNELS.VECTOR.CLEAR, async () => {
-    try {
-      await vectorStoreService.clear();
-    } catch (error) {
-      logger.error('Error clearing vector store:', error);
-      throw error;
-    }
-  });
-
-  // Embedding configuration handlers
-  ipcMain.handle(IPC_CHANNELS.EMBEDDING.GET_CONFIG, async () => {
-    try {
-      return embeddingService.getConfig();
-    } catch (error) {
-      logger.error('Error getting embedding config:', error);
-      throw error;
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.EMBEDDING.UPDATE_CONFIG, async (_event, config) => {
-    try {
-      await embeddingService.updateConfig(config);
-    } catch (error) {
-      logger.error('Error updating embedding config:', error);
-      throw error;
-    }
+  // Cleanup on app quit
+  process.on('exit', () => {
+    client.stopHealthCheck();
   });
 } 

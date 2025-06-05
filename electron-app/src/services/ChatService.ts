@@ -6,12 +6,24 @@ import { Role } from '../types/ipc';
 import { v4 as uuidv4 } from 'uuid';
 
 export class ChatService {
+  private static instance: ChatService;
+  private ollamaService: OllamaService;
+  private vectorStoreService: VectorStoreService;
   private conversations: Map<string, Conversation> = new Map();
 
-  constructor(
-    private readonly ollamaService: OllamaService,
-    private readonly vectorStoreService: VectorStoreService
-  ) {}
+  private constructor(ollamaService: OllamaService, vectorStoreService: VectorStoreService) {
+    this.ollamaService = ollamaService;
+    this.vectorStoreService = vectorStoreService;
+  }
+
+  public static getInstance(): ChatService {
+    if (!ChatService.instance) {
+      const ollamaService = OllamaService.getInstance();
+      const vectorStoreService = VectorStoreService.getInstance();
+      ChatService.instance = new ChatService(ollamaService, vectorStoreService);
+    }
+    return ChatService.instance;
+  }
 
   async initialize(): Promise<void> {
     logger.info('Initializing ChatService');

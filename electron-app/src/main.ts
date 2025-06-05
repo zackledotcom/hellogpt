@@ -2,14 +2,15 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { setupIpcHandlers } from './ipc/handlers';
 import { logger } from './utils/logger';
 import * as path from 'path';
-import { EmbeddingService } from './services/EmbeddingService';
-import { OllamaService } from './services/OllamaService';
+import { ServiceManager } from './services/ServiceManager';
 import { IPC_CHANNELS } from './ipc/channels';
 
 class MainWindow {
   private mainWindow: BrowserWindow | null = null;
+  private serviceManager: ServiceManager;
 
   constructor() {
+    this.serviceManager = ServiceManager.getInstance();
     this.setupAppEvents();
   }
 
@@ -21,94 +22,96 @@ class MainWindow {
       }
     });
     app.on('activate', () => {
-      if (!this.mainWindow) {
+      if (BrowserWindow.getAllWindows().length === 0) {
         this.createWindow();
       }
     });
   }
 
-  private createWindow(): void {
-    const preloadPath = process.env.NODE_ENV === 'development'
-      ? path.join(__dirname, 'preload.js')
-      : path.join(__dirname, '../dist/preload.js');
+  private async createWindow(): Promise<void> {
+    try {
+      // Initialize services
+      await this.initializeServices();
 
-    this.mainWindow = new BrowserWindow({
-      width: 1200,
-      height: 800,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        preload: preloadPath
-      }
-    });
-
-    if (!this.mainWindow) {
-      throw new Error('Failed to create main window');
-    }
-
-    // In development, load from Vite dev server
-    if (process.env.NODE_ENV === 'development') {
-      const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
-      this.mainWindow.loadURL(VITE_DEV_SERVER_URL).catch(err => {
-        console.error('Failed to load development URL:', err);
-        // Fallback to production build if dev server is not available
-        this.mainWindow?.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
+      // Create the browser window
+      this.mainWindow = new BrowserWindow({
+        width: 1200,
+        height: 800,
+        webPreferences: {
+          nodeIntegration: true,
+          contextIsolation: true,
+          preload: path.join(__dirname, 'preload.js'),
+        },
       });
-      this.mainWindow.webContents.openDevTools();
-    } else {
-      // In production, load the built index.html
-      this.mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
+
+      // Load the app
+      if (process.env.NODE_ENV === 'development') {
+        await this.mainWindow.loadURL('http://localhost:3000');
+        this.mainWindow.webContents.openDevTools();
+      } else {
+        await this.mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+      }
+
+      // Setup IPC handlers
+      await setupIpcHandlers();
+
+      // Start service monitoring
+      this.serviceManager.startMonitoring();
+
+      // Handle service status changes
+      this.serviceManager.on('serviceStatusChanged', ({ serviceName, status, error }) => {
+        if (this.mainWindow) {
+          this.mainWindow.webContents.send(IPC_CHANNELS.APP.SERVICE_STATUS_CHANGED, {
+            serviceName,
+            status,
+            error,
+          });
+        }
+      });
+
+    } catch (error) {
+      logger.error('Error creating window:', error);
+      // Don't exit the app, just log the error
     }
-
-    // Handle window errors
-    this.mainWindow.webContents.on('did-fail-load', (_, errorCode, errorDescription) => {
-      console.error('Window failed to load:', errorCode, errorDescription);
-    });
-
-    this.mainWindow.on('closed', () => {
-      this.mainWindow = null;
-    });
   }
 
-  public getWindow(): BrowserWindow | null {
-    return this.mainWindow;
-  }
+  private async initializeServices(): Promise<void> {
+    try {
+      // Start service monitoring
+      this.serviceManager.startMonitoring();
 
-  public sendToWindow(channel: string, ...args: any[]): void {
-    this.mainWindow?.webContents.send(channel, ...args);
+      // Initial service check
+      await this.serviceManager.checkServices();
+
+      // Setup periodic recovery attempts
+      setInterval(async () => {
+        const statuses = this.serviceManager.getAllServiceStatuses();
+        for (const [serviceName, state] of statuses.entries()) {
+          if (state.status === 'degraded') {
+            logger.info(`Attempting to recover ${serviceName} service...`);
+            await this.serviceManager.retryService(serviceName);
+          }
+        }
+      }, 60000); // Check every minute
+
+    } catch (error) {
+      logger.error('Error initializing services:', error);
+      // Don't exit the app, just log the error
+    }
   }
 }
 
 // Initialize main window
 const mainWindow = new MainWindow();
 
-async function setupEmbeddingHandlers(): Promise<void> {
-  const ollamaService = new OllamaService();
-  const embeddingService = new EmbeddingService(ollamaService);
-
-  ipcMain.handle(IPC_CHANNELS.EMBEDDING.GET_CONFIG, async () => {
-    return embeddingService.getConfig();
-  });
-
-  ipcMain.handle(IPC_CHANNELS.EMBEDDING.UPDATE_CONFIG, async (_, config) => {
-    return embeddingService.updateConfig(config);
-  });
-}
-
-// Setup IPC handlers
-setupIpcHandlers().catch(error => {
-  logger.error('Failed to setup IPC handlers:', error);
-  app.quit();
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught exception:', error);
+  // Don't exit the app, just log the error
 });
 
-async function initialize(): Promise<void> {
-  try {
-    await setupEmbeddingHandlers();
-  } catch (error) {
-    console.error('Failed to initialize application:', error);
-    app.quit();
-  }
-}
-
-app.whenReady().then(initialize); 
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled promise rejection:', reason);
+  // Don't exit the app, just log the error
+}); 

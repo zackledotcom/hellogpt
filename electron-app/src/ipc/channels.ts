@@ -13,7 +13,8 @@ export const IPC_CHANNELS = {
     DELETE_CONVERSATION: 'chat:delete-conversation',
   },
   APP: {
-    HEALTH_CHECK: 'app:health-check'
+    HEALTH_CHECK: 'app:health-check',
+    SERVICE_STATUS_CHANGED: 'app:service-status-changed'
   },
   OLLAMA: {
     LIST_MODELS: 'ollama:list-models',
@@ -22,6 +23,7 @@ export const IPC_CHANNELS = {
     CANCEL_LOAD: 'ollama:cancel-load',
     MODEL_LOADING_STATE_CHANGED: 'ollama:model-loading-state-changed',
     SAVE_CONFIG: 'ollama:save-config',
+    GET_CONNECTION_STATUS: 'ollama:get-connection-status'
   },
   MEMORY: {
     INITIALIZE: 'memory:initialize',

@@ -11,9 +11,12 @@ import { RequestQueue } from '../utils/RequestQueue';
 import { logger } from '../utils/logger';
 
 const OLLAMA_BASE_URL = 'http://localhost:11434';
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 1000;
+const MAX_RETRIES = 5;
+const INITIAL_RETRY_DELAY_MS = 1000;
+const MAX_RETRY_DELAY_MS = 30000;
 const CONNECTION_TIMEOUT_MS = 5000;
+const HEALTH_CHECK_INTERVAL_MS = 10000;
+const FALLBACK_MODE_TIMEOUT_MS = 300000; // 5 minutes
 
 export class OllamaClient {
   private static instance: OllamaClient;
@@ -27,39 +30,96 @@ export class OllamaClient {
   private modelLoadingStateListeners: ((state: ModelLoadingState) => void)[] = [];
   private isConnected: boolean = false;
   private connectionCheckInterval: NodeJS.Timeout | null = null;
+  private fallbackMode: boolean = false;
+  private fallbackModeTimeout: NodeJS.Timeout | null = null;
+  private lastSuccessfulConnection: number = 0;
+  private connectionAttempts: number = 0;
 
   private constructor() {
     this.requestQueue = new RequestQueue((ms) => new Promise(resolve => setTimeout(resolve, ms)));
     this.startConnectionCheck();
   }
 
-  private startConnectionCheck() {
+  private startConnectionCheck(): void {
     if (this.connectionCheckInterval) {
       clearInterval(this.connectionCheckInterval);
     }
-    
+
     this.connectionCheckInterval = setInterval(async () => {
       try {
-        const connected = await this.checkConnection();
-        if (connected !== this.isConnected) {
-          this.isConnected = connected;
-          logger.info(`Ollama connection status changed: ${connected ? 'connected' : 'disconnected'}`);
+        const isConnected = await this.checkConnection();
+        if (isConnected) {
+          this.handleSuccessfulConnection();
+        } else {
+          this.handleFailedConnection();
         }
       } catch (error) {
-        logger.error('Error checking Ollama connection:', error);
-        this.isConnected = false;
+        this.handleFailedConnection();
       }
-    }, 5000);
+    }, HEALTH_CHECK_INTERVAL_MS);
   }
 
-  public static getInstance(): OllamaClient {
-    if (!OllamaClient.instance) {
-      OllamaClient.instance = new OllamaClient();
+  private handleSuccessfulConnection(): void {
+    this.isConnected = true;
+    this.connectionAttempts = 0;
+    this.lastSuccessfulConnection = Date.now();
+    
+    if (this.fallbackMode) {
+      logger.info('Exiting fallback mode - Ollama service is now available');
+      this.fallbackMode = false;
+      if (this.fallbackModeTimeout) {
+        clearTimeout(this.fallbackModeTimeout);
+        this.fallbackModeTimeout = null;
+      }
     }
-    return OllamaClient.instance;
+  }
+
+  private handleFailedConnection(): void {
+    this.isConnected = false;
+    this.connectionAttempts++;
+    
+    if (!this.fallbackMode && this.connectionAttempts >= 3) {
+      logger.warn('Entering fallback mode - Ollama service is unavailable');
+      this.fallbackMode = true;
+      
+      // Set a timeout to exit fallback mode
+      if (this.fallbackModeTimeout) {
+        clearTimeout(this.fallbackModeTimeout);
+      }
+      this.fallbackModeTimeout = setTimeout(() => {
+        this.fallbackMode = false;
+        this.connectionAttempts = 0;
+      }, FALLBACK_MODE_TIMEOUT_MS);
+    }
+  }
+
+  private calculateRetryDelay(retryCount: number): number {
+    const delay = Math.min(
+      INITIAL_RETRY_DELAY_MS * Math.pow(2, retryCount),
+      MAX_RETRY_DELAY_MS
+    );
+    // Add jitter to prevent thundering herd
+    return delay + Math.random() * 1000;
+  }
+
+  private shouldRetry(error: any): boolean {
+    if (error instanceof Error) {
+      // Retry on network errors or 5xx server errors
+      if (error.name === 'AbortError' || error.name === 'TypeError') {
+        return true;
+      }
+      if ('status' in error && (error as OllamaError).status >= 500) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private async makeRequest<T>(endpoint: string, options: RequestInit = {}, retryCount = 0): Promise<T> {
+    if (this.fallbackMode) {
+      throw new Error('Ollama service is in fallback mode');
+    }
+
     const url = `${OLLAMA_BASE_URL}${endpoint}`;
     
     try {
@@ -91,24 +151,13 @@ export class OllamaClient {
       return response.json();
     } catch (error) {
       if (retryCount < MAX_RETRIES && this.shouldRetry(error)) {
-        logger.warn(`Retrying request to ${endpoint} (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (retryCount + 1)));
+        const delay = this.calculateRetryDelay(retryCount);
+        logger.warn(`Retrying request to ${endpoint} (attempt ${retryCount + 1}/${MAX_RETRIES}) after ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
         return this.makeRequest(endpoint, options, retryCount + 1);
       }
       throw error;
     }
-  }
-
-  private shouldRetry(error: any): boolean {
-    if (error instanceof Error) {
-      // Retry on network errors or 5xx server errors
-      if (error.name === 'AbortError' || error instanceof TypeError) {
-        return true;
-      }
-      const ollamaError = error as OllamaError;
-      return ollamaError.status !== undefined && ollamaError.status >= 500;
-    }
-    return false;
   }
 
   public async checkConnection(): Promise<boolean> {
@@ -116,13 +165,24 @@ export class OllamaClient {
       await this.makeRequest('/api/tags');
       return true;
     } catch (error) {
-      logger.error('Ollama connection check failed:', error);
       return false;
     }
   }
 
   public isServiceConnected(): boolean {
     return this.isConnected;
+  }
+
+  public isInFallbackMode(): boolean {
+    return this.fallbackMode;
+  }
+
+  public getLastSuccessfulConnection(): number {
+    return this.lastSuccessfulConnection;
+  }
+
+  public getConnectionAttempts(): number {
+    return this.connectionAttempts;
   }
 
   private queueRequest<T>(request: () => Promise<T>, maxRetries: number = MAX_RETRIES): Promise<T> {
@@ -277,5 +337,12 @@ export class OllamaClient {
     } catch (error) {
       onError(error as Error);
     }
+  }
+
+  public static getInstance(): OllamaClient {
+    if (!OllamaClient.instance) {
+      OllamaClient.instance = new OllamaClient();
+    }
+    return OllamaClient.instance;
   }
 } 

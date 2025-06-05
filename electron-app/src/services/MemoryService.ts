@@ -36,8 +36,8 @@ export interface MemoryChunk {
 
 export class MemoryService extends EventEmitter {
   private static instance: MemoryService;
-  private db!: Database;
   private isInitialized: boolean = false;
+  private db: Database | null = null;
 
   private constructor() {
     super();
@@ -89,151 +89,84 @@ export class MemoryService extends EventEmitter {
     }
   }
 
-  public async store(
-    content: string, 
-    metadata: Omit<MemoryChunk['metadata'], 'timestamp'>
-  ): Promise<{ success: boolean; id?: string; error?: string }> {
-    try {
-      if (!this.isInitialized) {
-        throw new Error('Memory service not initialized');
-      }
-
-      const id = crypto.randomUUID();
-      const timestamp = Date.now();
-      const memory: MemoryChunk = {
-        id,
-        content,
-        metadata: {
-          ...metadata,
-          timestamp
-        }
-      };
-
-      // Store in database
-      this.db.prepare(`
-        INSERT INTO memories (id, content, metadata, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(
-        id,
-        content,
-        JSON.stringify(memory.metadata),
-        timestamp,
-        timestamp
-      );
-
-      this.emit('stored', memory);
-      return { success: true, id };
-    } catch (error) {
-      console.error('Failed to store memory:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Failed to store memory' 
-      };
+  public async store(chunk: MemoryChunk): Promise<void> {
+    if (!this.isInitialized || !this.db) {
+      throw new Error('Memory service not initialized');
     }
+
+    const stmt = this.db.prepare(`
+      INSERT INTO memories (id, content, metadata, embedding, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      chunk.id,
+      chunk.content,
+      JSON.stringify(chunk.metadata),
+      chunk.vector ? new Float64Array(chunk.vector).buffer : null,
+      Date.now(),
+      Date.now()
+    );
+
+    this.emit('stored', chunk);
   }
 
-  public async search(
-    query: string, 
-    options: { limit?: number } = {}
-  ): Promise<{ success: boolean; results?: MemoryChunk[]; error?: string }> {
-    try {
-      if (!this.isInitialized) {
-        throw new Error('Memory service not initialized');
-      }
-
-      const limit = options.limit || 10;
-      
-      // Simple text search for now - can be enhanced with embeddings later
-      const results = this.db.prepare(`
-        SELECT id, content, metadata
-        FROM memories
-        WHERE content LIKE ? OR metadata LIKE ?
-        ORDER BY created_at DESC
-        LIMIT ?
-      `).all(`%${query}%`, `%${query}%`, limit) as DatabaseRow[];
-
-      const memories: MemoryChunk[] = results.map((row: DatabaseRow) => ({
-        id: row.id,
-        content: row.content,
-        metadata: JSON.parse(row.metadata)
-      }));
-
-      this.emit('searched', memories);
-      return { success: true, results: memories };
-    } catch (error) {
-      console.error('Failed to search memories:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Failed to search memories' 
-      };
+  public async search(query: string): Promise<MemoryChunk[]> {
+    if (!this.isInitialized || !this.db) {
+      throw new Error('Memory service not initialized');
     }
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM memories 
+      WHERE content LIKE ? 
+      ORDER BY created_at DESC
+    `);
+
+    const rows = stmt.all(`%${query}%`);
+    return rows.map(row => ({
+      id: row.id,
+      content: row.content,
+      metadata: JSON.parse(row.metadata),
+      vector: row.embedding ? Array.from(new Float64Array(row.embedding)) : undefined,
+    }));
   }
 
-  public async getRecent(
-    limit: number = 10
-  ): Promise<{ success: boolean; results?: MemoryChunk[]; error?: string }> {
-    try {
-      if (!this.isInitialized) {
-        throw new Error('Memory service not initialized');
-      }
-
-      const results = this.db.prepare(`
-        SELECT id, content, metadata
-        FROM memories
-        ORDER BY created_at DESC
-        LIMIT ?
-      `).all(limit) as DatabaseRow[];
-
-      const memories: MemoryChunk[] = results.map((row: DatabaseRow) => ({
-        id: row.id,
-        content: row.content,
-        metadata: JSON.parse(row.metadata)
-      }));
-
-      this.emit('recent', memories);
-      return { success: true, results: memories };
-    } catch (error) {
-      console.error('Failed to get recent memories:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Failed to get recent memories' 
-      };
+  public async getRecent(limit: number = 10): Promise<MemoryChunk[]> {
+    if (!this.isInitialized || !this.db) {
+      throw new Error('Memory service not initialized');
     }
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM memories 
+      ORDER BY created_at DESC 
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(limit);
+    return rows.map(row => ({
+      id: row.id,
+      content: row.content,
+      metadata: JSON.parse(row.metadata),
+      vector: row.embedding ? Array.from(new Float64Array(row.embedding)) : undefined,
+    }));
   }
 
-  public async delete(id: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      if (!this.isInitialized) {
-        throw new Error('Memory service not initialized');
-      }
-
-      this.db.prepare('DELETE FROM memories WHERE id = ?').run(id);
-      this.emit('deleted', id);
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to delete memory:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Failed to delete memory' 
-      };
+  public async delete(id: string): Promise<void> {
+    if (!this.isInitialized || !this.db) {
+      throw new Error('Memory service not initialized');
     }
+
+    const stmt = this.db.prepare('DELETE FROM memories WHERE id = ?');
+    stmt.run(id);
+    this.emit('deleted', id);
   }
 
-  public async clear(): Promise<{ success: boolean; error?: string }> {
-    try {
-      if (!this.isInitialized) {
-        throw new Error('Memory service not initialized');
-      }
-
-      this.db.prepare('DELETE FROM memories').run();
-      this.emit('cleared');
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to clear memories:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Failed to clear memories' 
-      };
+  public async clear(): Promise<void> {
+    if (!this.isInitialized || !this.db) {
+      throw new Error('Memory service not initialized');
     }
+
+    this.db.exec('DELETE FROM memories');
+    this.emit('cleared');
   }
 } 

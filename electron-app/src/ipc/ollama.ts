@@ -10,8 +10,8 @@ export function setupOllamaHandlers(): void {
   // List models
   ipcMain.handle(IPC_CHANNELS.OLLAMA.LIST_MODELS, async () => {
     try {
-      if (!ollama.isServiceConnected()) {
-        throw new Error('Ollama service is not connected');
+      if (ollama.isInFallbackMode()) {
+        throw new Error('Ollama service is in fallback mode');
       }
       return await ollama.listModels();
     } catch (error) {
@@ -23,8 +23,8 @@ export function setupOllamaHandlers(): void {
   // Set model
   ipcMain.handle(IPC_CHANNELS.OLLAMA.SET_MODEL, async (_, modelName: string) => {
     try {
-      if (!ollama.isServiceConnected()) {
-        throw new Error('Ollama service is not connected');
+      if (ollama.isInFallbackMode()) {
+        throw new Error('Ollama service is in fallback mode');
       }
       await ollama.setModel(modelName);
     } catch (error) {
@@ -37,18 +37,28 @@ export function setupOllamaHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.OLLAMA.CHECK_CONNECTION, async () => {
     try {
       const isConnected = await ollama.checkConnection();
-      return { status: isConnected ? 'connected' : 'disconnected' };
+      return { 
+        status: isConnected ? 'connected' : 'disconnected',
+        isFallbackMode: ollama.isInFallbackMode(),
+        lastSuccessfulConnection: ollama.getLastSuccessfulConnection(),
+        connectionAttempts: ollama.getConnectionAttempts()
+      };
     } catch (error) {
       logger.error('Failed to check connection:', error);
-      return { status: 'disconnected' };
+      return { 
+        status: 'disconnected',
+        isFallbackMode: ollama.isInFallbackMode(),
+        lastSuccessfulConnection: ollama.getLastSuccessfulConnection(),
+        connectionAttempts: ollama.getConnectionAttempts()
+      };
     }
   });
 
   // Cancel load
   ipcMain.handle(IPC_CHANNELS.OLLAMA.CANCEL_LOAD, async () => {
     try {
-      if (!ollama.isServiceConnected()) {
-        throw new Error('Ollama service is not connected');
+      if (ollama.isInFallbackMode()) {
+        throw new Error('Ollama service is in fallback mode');
       }
       await ollama.cancelLoad();
     } catch (error) {
@@ -60,8 +70,8 @@ export function setupOllamaHandlers(): void {
   // Save model configuration
   ipcMain.handle(IPC_CHANNELS.OLLAMA.SAVE_CONFIG, async (_, { modelName, config }: { modelName: string; config: OllamaRequestOptions }) => {
     try {
-      if (!ollama.isServiceConnected()) {
-        throw new Error('Ollama service is not connected');
+      if (ollama.isInFallbackMode()) {
+        throw new Error('Ollama service is in fallback mode');
       }
       await ollama.setModel(modelName);
       await ollama.updateModelConfig(modelName, config);
@@ -69,6 +79,16 @@ export function setupOllamaHandlers(): void {
       logger.error('Failed to save model configuration:', error);
       throw error;
     }
+  });
+
+  // Get connection status
+  ipcMain.handle(IPC_CHANNELS.OLLAMA.GET_CONNECTION_STATUS, () => {
+    return {
+      isConnected: ollama.isServiceConnected(),
+      isFallbackMode: ollama.isInFallbackMode(),
+      lastSuccessfulConnection: ollama.getLastSuccessfulConnection(),
+      connectionAttempts: ollama.getConnectionAttempts()
+    };
   });
 
   // Model loading state changed

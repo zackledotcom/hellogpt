@@ -17,6 +17,7 @@ interface HierarchicalNSW {
 }
 
 export class VectorStoreService {
+  private static instance: VectorStoreService;
   private readonly CHUNK_SIZE = 1000;
   private readonly CHUNK_OVERLAP = 200;
   private readonly VECTOR_SIZE = 1536; // OpenAI embedding dimension
@@ -26,9 +27,17 @@ export class VectorStoreService {
   private embeddingService: EmbeddingService;
   private nextId: number = 0;
 
-  constructor(embeddingService: EmbeddingService) {
+  private constructor(embeddingService: EmbeddingService) {
     this.indexPath = path.join(app.getPath('userData'), 'vector-store');
     this.embeddingService = embeddingService;
+  }
+
+  public static getInstance(): VectorStoreService {
+    if (!VectorStoreService.instance) {
+      const embeddingService = EmbeddingService.getInstance();
+      VectorStoreService.instance = new VectorStoreService(embeddingService);
+    }
+    return VectorStoreService.instance;
   }
 
   async initialize(): Promise<void> {

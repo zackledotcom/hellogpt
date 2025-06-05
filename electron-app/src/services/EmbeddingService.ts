@@ -1,5 +1,9 @@
 import { logger } from '../utils/logger';
 import { OllamaService } from './OllamaService';
+import { InMemoryVectorStore } from './InMemoryVectorStore';
+import { v4 as uuidv4 } from 'uuid';
+
+export type ServiceStatus = 'operational' | 'degraded' | 'unavailable';
 
 export interface EmbeddingConfig {
   // Model settings
@@ -45,8 +49,11 @@ export interface EmbeddingConfig {
 }
 
 export class EmbeddingService {
+  private static instance: EmbeddingService;
   private readonly ollamaService: OllamaService;
   private config: EmbeddingConfig;
+  private status: ServiceStatus = 'operational';
+  private fallbackStore: InMemoryVectorStore;
   private readonly defaultConfig: EmbeddingConfig = {
     model: 'nomic-embed-text',
     modelParameters: {
@@ -79,24 +86,48 @@ export class EmbeddingService {
     rerankResults: false,
   };
 
-  constructor(ollamaService: OllamaService, config?: Partial<EmbeddingConfig>) {
+  private constructor(ollamaService: OllamaService, config?: Partial<EmbeddingConfig>) {
     this.ollamaService = ollamaService;
     this.config = { ...this.defaultConfig, ...config };
+    this.fallbackStore = new InMemoryVectorStore(1536);
+  }
+
+  public static getInstance(): EmbeddingService {
+    if (!EmbeddingService.instance) {
+      const ollamaService = OllamaService.getInstance();
+      EmbeddingService.instance = new EmbeddingService(ollamaService);
+    }
+    return EmbeddingService.instance;
   }
 
   async initialize(): Promise<void> {
     try {
       logger.info('Initializing EmbeddingService');
+      const connectionStatus = await this.ollamaService.checkConnection();
+      
+      if (connectionStatus.status === 'disconnected') {
+        this.status = 'degraded';
+        logger.warn('Ollama service is not available. Using fallback embedding mode.');
+        return;
+      }
+
       // Ensure the embedding model is available
       const models = await this.ollamaService.listModels();
       if (!models.models.some(model => model.name === this.config.model)) {
         logger.info(`Embedding model ${this.config.model} not found, pulling...`);
         await this.ollamaService.pullModel(this.config.model);
       }
+
+      this.status = 'operational';
     } catch (error) {
+      this.status = 'degraded';
       logger.error('Error initializing embedding service:', error);
       throw error;
     }
+  }
+
+  getStatus(): ServiceStatus {
+    return this.status;
   }
 
   async updateConfig(newConfig: Partial<EmbeddingConfig>): Promise<void> {
@@ -174,8 +205,32 @@ export class EmbeddingService {
     return chunks;
   }
 
+  private generateFallbackEmbedding(text: string): number[] {
+    // Simple fallback embedding using character frequencies
+    const embedding = new Array(1536).fill(0);
+    const chars = text.toLowerCase().split('');
+    
+    chars.forEach((char, i) => {
+      const index = (char.charCodeAt(0) * i) % 1536;
+      embedding[index] += 1;
+    });
+
+    // Normalize the embedding
+    const magnitude = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
+    return embedding.map(val => val / magnitude);
+  }
+
   async generateEmbedding(text: string): Promise<number[]> {
     try {
+      if (this.status === 'unavailable') {
+        throw new Error('Embedding service is unavailable');
+      }
+
+      if (this.status === 'degraded' || !this.ollamaService.isServiceAvailable()) {
+        logger.warn('Using fallback embedding generation');
+        return this.generateFallbackEmbedding(text);
+      }
+
       const truncatedText = this.truncateText(text);
       const response = await fetch('http://localhost:11434/api/embeddings', {
         method: 'POST',
@@ -206,12 +261,19 @@ export class EmbeddingService {
       return embedding;
     } catch (error) {
       logger.error('Error generating embedding:', error);
-      throw error;
+      if (this.status === 'operational') {
+        this.status = 'degraded';
+      }
+      return this.generateFallbackEmbedding(text);
     }
   }
 
   async generateEmbeddings(texts: string[]): Promise<number[][]> {
     try {
+      if (this.status === 'unavailable') {
+        throw new Error('Embedding service is unavailable');
+      }
+
       const embeddings: number[][] = [];
       const batchSize = this.config.batchSize ?? 32;
       
@@ -226,8 +288,23 @@ export class EmbeddingService {
       return embeddings;
     } catch (error) {
       logger.error('Error generating embeddings:', error);
-      throw error;
+      if (this.status === 'operational') {
+        this.status = 'degraded';
+      }
+      return texts.map(text => this.generateFallbackEmbedding(text));
     }
+  }
+
+  async storeEmbedding(text: string, metadata: any = {}): Promise<string> {
+    const id = uuidv4();
+    const embedding = await this.generateEmbedding(text);
+    this.fallbackStore.add(id, embedding, metadata);
+    return id;
+  }
+
+  async searchSimilar(query: string, k: number = 5): Promise<Array<{ id: string; similarity: number; metadata: any }>> {
+    const queryEmbedding = await this.generateEmbedding(query);
+    return this.fallbackStore.search(queryEmbedding, k);
   }
 
   async rerankResults(query: string, results: { text: string; score: number }[]): Promise<{ text: string; score: number }[]> {

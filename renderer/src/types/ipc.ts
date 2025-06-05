@@ -1,3 +1,7 @@
+import type { ServiceName, ServiceState, ServiceStatus } from './services';
+import type { OllamaModel, ModelLoadingState } from '@electron-app/types/ollama';
+import type { EmbeddingConfig } from './embedding';
+
 export const enum Role {
   System = 'system',
   User = 'user',
@@ -16,51 +20,82 @@ export interface ChatResponse {
   error?: string;
 }
 
-export interface OllamaModel {
-  name: string;
-  size: number;
-  parameter_size: string;
-  quantization_level: string;
-}
-
 export interface OllamaConnectionStatus {
   connected: boolean;
   error?: string;
 }
 
 export interface AppStatus {
-  status: 'ok' | 'error';
-  message?: string;
+  status: 'healthy' | 'unhealthy';
+  timestamp: number;
+  details: {
+    ollamaConnected: boolean;
+    currentModel: string;
+  };
 }
 
-export interface ModelLoadingState {
-  isLoading: boolean;
-  modelName?: string;
-  progress?: number;
-  estimatedTimeRemaining?: number;
-  error?: string;
+export interface Conversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface Document {
+  id: string;
+  content: string;
+  metadata: Record<string, any>;
 }
 
 export interface IpcMessageMap {
-  'ollama:list-models': {
+  'app:health-check': {
+    request: undefined;
+    response: Record<ServiceName, ServiceState>;
+  };
+  'app:retry-service': {
+    request: { serviceName: ServiceName };
+    response: boolean;
+  };
+  'app:show-setup-guide': {
+    request: undefined;
+    response: void;
+  };
+  'app:show-troubleshooter': {
+    request: undefined;
+    response: void;
+  };
+  'app:service-status-changed': {
     request: void;
+    response: { serviceName: ServiceName; status: ServiceStatus; error?: string };
+  };
+  'ollama:list-models': {
+    request: undefined;
     response: OllamaModel[];
   };
   'ollama:set-model': {
-    request: string;
-    response: void;
+    request: { modelName: string };
+    response: boolean;
   };
   'ollama:check-connection': {
-    request: void;
-    response: OllamaConnectionStatus;
+    request: undefined;
+    response: boolean;
   };
   'ollama:cancel-load': {
-    request: void;
+    request: undefined;
     response: void;
   };
   'ollama:save-config': {
     request: { modelName: string; config: any };
     response: void;
+  };
+  'embedding:get-config': {
+    request: undefined;
+    response: EmbeddingConfig;
+  };
+  'embedding:update-config': {
+    request: Partial<EmbeddingConfig>;
+    response: EmbeddingConfig;
   };
   'ollama:model-loading-state': {
     request: void;
@@ -71,11 +106,11 @@ export interface IpcMessageMap {
     response: OllamaConnectionStatus;
   };
   'conversation:list': {
-    request: void;
+    request: undefined;
     response: Conversation[];
   };
   'conversation:get': {
-    request: string;
+    request: { id: string };
     response: Conversation;
   };
   'conversation:create': {
@@ -87,7 +122,7 @@ export interface IpcMessageMap {
     response: Conversation;
   };
   'conversation:delete': {
-    request: string;
+    request: { id: string };
     response: void;
   };
   'vector-store:search': {
@@ -128,60 +163,21 @@ export interface IpcMessageMap {
   };
 }
 
-export interface Conversation {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  messages: ChatMessage[];
-}
-
-export interface Document {
-  id: string;
-  content: string;
-  metadata: Record<string, any>;
-}
-
 export interface ElectronAPI {
   ipc: {
     invoke: <K extends keyof IpcMessageMap>(
       channel: K,
       request: IpcMessageMap[K]['request']
     ) => Promise<IpcMessageMap[K]['response']>;
-    on: <K extends string>(channel: K, callback: (...args: any[]) => void) => () => void;
-  };
-  ollama: {
-    listModels: () => Promise<OllamaModel[]>;
-    setModel: (modelName: string) => Promise<void>;
-    checkConnection: () => Promise<OllamaConnectionStatus>;
-    cancelLoad: () => Promise<void>;
-    saveConfig: (modelName: string, config: any) => Promise<void>;
-    onModelLoadingStateChanged: (callback: (state: ModelLoadingState) => void) => () => void;
-  };
-  vectorStore: {
-    search: (query: string) => Promise<Document[]>;
-    add: (document: Document) => Promise<void>;
-    delete: (id: string) => Promise<void>;
-    clear: () => Promise<void>;
-  };
-  chat: {
-    sendMessage: (message: ChatMessage) => Promise<ChatResponse>;
-    sendMessageStream: (message: ChatMessage) => Promise<void>;
-    onStreamChunk: (callback: (chunk: string) => void) => () => void;
-    onStreamEnd: (callback: () => void) => () => void;
-    onStreamError: (callback: (error: Error) => void) => () => void;
-  };
-  conversation: {
-    list: () => Promise<Conversation[]>;
-    get: (id: string) => Promise<Conversation>;
-    create: (title: string) => Promise<Conversation>;
-    update: (id: string, title: string) => Promise<Conversation>;
-    delete: (id: string) => Promise<void>;
+    on: <K extends string>(
+      channel: K,
+      callback: (...args: any[]) => void
+    ) => () => void;
   };
 }
 
 declare global {
   interface Window {
-    electronAPI: ElectronAPI;
+    electron: ElectronAPI;
   }
 } 

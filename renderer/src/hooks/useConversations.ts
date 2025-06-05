@@ -1,102 +1,137 @@
-import { useState, useCallback, useEffect } from 'react';
-import { Conversation, ChatMessage } from '../types';
+import { useState, useEffect } from 'react';
+import type { Conversation, ChatMessage, ChatResponse } from '../types/ipc';
 
-export const useConversations = () => {
+export function useConversations() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadConversations = useCallback(async () => {
-    try {
-      const loadedConversations = await window.electronAPI.listConversations();
-      setConversations(loadedConversations);
-    } catch (err) {
-      setError('Failed to load conversations');
-      console.error('Error loading conversations:', err);
-    }
-  }, []);
-
-  const loadConversation = useCallback(async (id: string) => {
+  const loadConversations = async () => {
     try {
       setIsLoading(true);
-      const loadedMessages = await window.electronAPI.getConversation(id);
-      const conversation = conversations.find(c => c.id === id);
-      if (conversation) {
-        setCurrentConversation(conversation);
-        setMessages(loadedMessages);
-      }
+      const loadedConversations = await window.electron.ipc.invoke('conversation:list', undefined);
+      setConversations(loadedConversations);
+      setError(null);
     } catch (err) {
-      setError('Failed to load conversation');
-      console.error('Error loading conversation:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load conversations');
     } finally {
       setIsLoading(false);
     }
-  }, [conversations]);
+  };
 
-  const createConversation = useCallback(async (title: string) => {
+  const loadConversation = async (id: string) => {
     try {
-      const id = await window.electronAPI.createConversation(title);
-      await loadConversations();
-      return id;
+      setIsLoading(true);
+      const conversation = await window.electron.ipc.invoke('conversation:get', { id });
+      setCurrentConversation(conversation);
+      setError(null);
     } catch (err) {
-      setError('Failed to create conversation');
-      console.error('Error creating conversation:', err);
-      throw err;
+      setError(err instanceof Error ? err.message : 'Failed to load conversation');
+    } finally {
+      setIsLoading(false);
     }
-  }, [loadConversations]);
+  };
 
-  const deleteConversation = useCallback(async (id: string) => {
+  const createConversation = async (title: string) => {
     try {
-      await window.electronAPI.deleteConversation(id);
+      setIsLoading(true);
+      const conversation = await window.electron.ipc.invoke('conversation:create', { title });
+      setConversations(prev => [...prev, conversation]);
+      setCurrentConversation(conversation);
+      setError(null);
+      return conversation;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create conversation');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const deleteConversation = async (id: string) => {
+    try {
+      setIsLoading(true);
+      await window.electron.ipc.invoke('conversation:delete', { id });
+      setConversations(prev => prev.filter(conv => conv.id !== id));
       if (currentConversation?.id === id) {
         setCurrentConversation(null);
-        setMessages([]);
       }
-      await loadConversations();
+      setError(null);
     } catch (err) {
-      setError('Failed to delete conversation');
-      console.error('Error deleting conversation:', err);
+      setError(err instanceof Error ? err.message : 'Failed to delete conversation');
+    } finally {
+      setIsLoading(false);
     }
-  }, [currentConversation, loadConversations]);
+  };
 
-  const updateConversationTitle = useCallback(async (id: string, title: string) => {
+  const updateConversationTitle = async (id: string, title: string) => {
     try {
-      await window.electronAPI.updateConversationTitle(id, title);
-      await loadConversations();
+      setIsLoading(true);
+      const updated = await window.electron.ipc.invoke('conversation:update', { id, title });
+      setConversations(prev => prev.map(conv => conv.id === id ? updated : conv));
       if (currentConversation?.id === id) {
-        setCurrentConversation(prev => prev ? { ...prev, title } : null);
+        setCurrentConversation(updated);
       }
+      setError(null);
     } catch (err) {
-      setError('Failed to update conversation title');
-      console.error('Error updating conversation title:', err);
+      setError(err instanceof Error ? err.message : 'Failed to update conversation title');
+    } finally {
+      setIsLoading(false);
     }
-  }, [currentConversation, loadConversations]);
+  };
 
-  const addMessage = useCallback(async (message: ChatMessage) => {
-    try {
-      setMessages(prev => [...prev, message]);
-    } catch (err) {
-      setError('Failed to add message');
-      console.error('Error adding message:', err);
+  const sendMessage = async (message: ChatMessage) => {
+    if (!currentConversation) {
+      throw new Error('No active conversation');
     }
-  }, []);
+
+    try {
+      setIsLoading(true);
+      const response = await window.electron.ipc.invoke('chat:send-message', message);
+      const updatedConversation = {
+        ...currentConversation,
+        messages: [...currentConversation.messages, message, response.message]
+      };
+      setCurrentConversation(updatedConversation);
+      setConversations(prev => prev.map(conv => 
+        conv.id === currentConversation.id ? updatedConversation : conv
+      ));
+      setError(null);
+      return response;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send message');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
     loadConversations();
-  }, [loadConversations]);
+
+    const unsubscribe = window.electron.ipc.on('conversation:updated', (conversation: Conversation) => {
+      setConversations(prev => prev.map(conv => conv.id === conversation.id ? conversation : conv));
+      if (currentConversation?.id === conversation.id) {
+        setCurrentConversation(conversation);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [currentConversation?.id]);
 
   return {
     conversations,
     currentConversation,
-    messages,
     isLoading,
     error,
+    loadConversations,
     loadConversation,
     createConversation,
     deleteConversation,
     updateConversationTitle,
-    addMessage,
+    sendMessage
   };
-}; 
+} 
